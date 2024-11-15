@@ -1,0 +1,22 @@
+{
+    "name": "Crunchyroll",
+    "description": "Watch the latest anime on Crunchyroll",
+    "author": "FUTO",
+    "authorUrl": "https://futo.org",
+    "platformUrl": "https://crunchyroll.com",
+    "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
+    "repositoryUrl": "https://gitlab.futo.org/videostreaming/plugins/crunchyroll",
+    "scriptUrl": "./CrunchyrollScript.js",
+    "version": 1,
+    "iconUrl": "./CrunchyrollIcon.png",
+    "id": "9bb33039-8580-48d4-9849-21319ae845a4",
+    "scriptSignature": "",
+    "scriptPublicKey": "",
+    "packages": [
+        "Http"
+    ],
+    "allowEval": false,
+    "allowUrls": [
+        "crunchyroll.com"
+    ]
+}
