@@ -13,10 +13,18 @@
     "scriptSignature": "",
     "scriptPublicKey": "",
     "packages": [
-        "Http"
+        "Http",
+        "Utilities"
     ],
     "allowEval": false,
     "allowUrls": [
-        "crunchyroll.com"
-    ]
+        "www.crunchyroll.com",
+        "cr-play-service.prd.crunchyrollsvc.com"
+    ],
+    "authentication": {
+        "loginUrl": "https://sso.crunchyroll.com/login",
+        "cookiesToFind": [
+            "etp_rt"
+        ]
+    }
 }
