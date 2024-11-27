@@ -37,5 +37,30 @@ export type SearchTypes = typeof Type.Feed.Videos
 //#endregion
 
 //#region JSON types
-
+export type EpisodeResponse = {
+    readonly data: {
+        readonly description: string
+        readonly id: string
+        readonly channel_id: string
+        readonly images: {
+            readonly thumbnail: {
+                readonly height: 1080 | 900
+                readonly source: string
+            }[][]
+        }
+        readonly title: string
+        readonly rating: {
+            readonly total: number
+        }
+        readonly episode_metadata: {
+            /** e.g. "2018-04-08T00:00:00+09:00" */
+            readonly upload_date: string
+            readonly series_title: string
+            readonly series_id: string
+            readonly series_slug_title: string
+            readonly is_premium_only: boolean
+            readonly duration_ms: number
+        }
+    }[]
+}
 //#endregion

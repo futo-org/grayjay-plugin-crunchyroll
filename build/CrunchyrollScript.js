@@ -1,9 +1,10 @@
 const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]*?)\//;
+const SERIES_URL_PREFIX = "https://www.crunchyroll.com/series/";
 const PLATFORM = "Crunchyroll";
 // const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0" as const
 // const HARDCODED_ZERO = 0 as const
 // const HARDCODED_EMPTY_STRING = "" as const
-const HARDCODED_THUMBNAIL_QUALITY = 1080;
+// const HARDCODED_THUMBNAIL_QUALITY = 1080 as const
 const local_http = http;
 const local_utility = utility;
 // set missing constants
@@ -56,7 +57,35 @@ function enable(conf, settings, saved_state) {
         local_state = state;
     }
     else {
-        local_state = { bearer_token: "eyJhbGciOiJSUzI1NiIsImtpZCI6IklOcHRNZEtSSUQ0Tl9KYlRSS0lMaHciLCJ0eXAiOiJKV1QifQ.eyJhbm9ueW1vdXNfaWQiOiJjNDIxZWE1ZS1mZmE1LTQ2MWItYWM4YS1iMDU0ZTc2ZjgxNDQiLCJiZW5lZml0cyI6W10sImNsaWVudF9pZCI6ImNyX2JhY2tlbmQiLCJjbGllbnRfdGFnIjoiMS4wLjAgYmV0YSIsImNvdW50cnkiOiJVUyIsImRldmljZV9pZCI6ImZlODc3ZGZhLTE4ZmQtNDk3Yi1hZmI5LTBlNzg4NTA3ZGJhMCIsImV0cF91c2VyX2lkIjoiMjYxNDRlZjQtZTZlZi01MWM0LTkyODMtMjM3ZDY3MTVlMTlhIiwiZXhwIjoxNzMxNjg0OTIxLCJqdGkiOiI4MGY0NzY5Mi01ZTE1LTQ5MzMtOWE3Yi1mYWIxN2U0MGY1ZjIiLCJtYXR1cml0eSI6Ik0yIiwib2F1dGhfc2NvcGVzIjoiYWNjb3VudCBjb250ZW50IG1wOmxpbWl0ZWQgb2ZmbGluZV9hY2Nlc3MiLCJwcm9maWxlX2lkIjoiMjYxNDRlZjQtZTZlZi01MWM0LTkyODMtMjM3ZDY3MTVlMTlhIiwicnRfaWQiOiJjc3JiaDd0ZjV2dHRmMzIzZzM0ZyIsInNjb3BlcyI6eyJjciI6eyJhY2NfaWQiOiIyNjE0NGVmNC1lNmVmLTUxYzQtOTI4My0yMzdkNjcxNWUxOWEiLCJleHRfaWQiOiIxMTg5Mjg1MzA5In19LCJzdGF0dXMiOiJBQ1RJVkUiLCJ0bnQiOiJjciJ9.mRkAziUyjdLmX88AMGCLYkHVUbkhrJh5EEbeFNJk6INGz574OrXMNkKpeKTi0j6wri4ZtNRr7z5H9JPQc5KRjYtCQuvAcRFnToqtKEF2551HNEfkZUzIJOgGNEMz17cnZcpw6JMTEVAIb6dsRA6ruiXLTLl-Xvs_xjDcUEBLIFamCNCDr4_MckvexgpKjpYxBRuI-L9mhQdiSBdkX82T_fI_QlpHf0f7IErrYbsQsHYeeUqPJ3Sd6IK8bM8WqyW31wcH6EVWUUaQ4V88byWb1KfY2hC_sBabDAcpTrucBhNOCYZRCiczXutBkRXxK-4LoRde2_iabdY1REOnO9D4iw" };
+        const html = local_http.GET("https://www.crunchyroll.com/", {}, true).body;
+        const match_result = html.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
+        if (match_result === null || match_result[1] === undefined) {
+            throw new ScriptException("regex error");
+        }
+        const accountAuthClientId = match_result[1];
+        const auth = local_utility.toBase64(string_to_bytes(`${accountAuthClientId}:`));
+        const token_url = "https://www.crunchyroll.com/auth/v1/token";
+        // TODO the bearer token likely needs to be refreshed after some amount of time
+        // here is an example for Spotify if that's helpful
+        // https://gitlab.futo.org/videostreaming/plugins/spotify/-/blob/master/src/SpotifyScript.ts?ref_type=heads#L255
+        function get_bearer() {
+            if (bridge.isLoggedIn()) {
+                const response = JSON.parse(local_http.POST(token_url, "grant_type=etp_rt_cookie", {
+                    Authorization: `Basic ${auth}`,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                }, true).body);
+                return response.access_token;
+            }
+            else {
+                const response = JSON.parse(local_http.POST(token_url, "grant_type=client_id", {
+                    Authorization: `Basic ${auth}`,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Etp-Anonymous-Id": "6ba29c34-469b-4597-9d0d-9bbc672fb2d7"
+                }, false).body);
+                return response.access_token;
+            }
+        }
+        local_state = { bearer_token: get_bearer() };
     }
 }
 //#endregion
@@ -68,7 +97,9 @@ function saveState() {
 }
 //#region home
 function getHome() {
-    return new ContentPager([], false);
+    return new ContentPager([
+        getContentDetails("https://www.crunchyroll.com/watch/GQJUG97WW/the-monster-of-the-abyss")
+    ], false);
 }
 //#endregion
 //#region search
@@ -86,69 +117,74 @@ function search(query, type, order, filters) {
 function isContentDetailsUrl(url) {
     return CONTENT_DETAIL_REGEX.test(url);
 }
+// TODO one thing to figure out will be how to link to other dubbings. they are different content ids (urls)
+// i don't think grayjay current has good support for the kind of structure crunchyroll uses. i'm not sure what the best approach will be
+//
+// TODO it's very easy to fill up the "active streams" for a premium account. there is likely an api call that is made when a tab closes that signals that the stream has ended. we'll need to send that request
 function getContentDetails(url) {
     const video_id = url.match(CONTENT_DETAIL_REGEX)?.[1];
     if (video_id === undefined) {
         throw new ScriptException("regex error");
     }
-    const html = local_http.GET(url, {}, true).body;
-    const match_result = html.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
-    if (match_result === null || match_result[1] === undefined) {
-        throw new ScriptException("regex error");
+    const responses = local_http
+        .batch()
+        .GET(`https://www.crunchyroll.com/content/v2/cms/objects/${video_id}?ratings=true`, { Authorization: `Bearer ${local_state.bearer_token}` }, false)
+        .GET(`https://cr-play-service.prd.crunchyrollsvc.com/v1/${video_id}/web/firefox/play`, { Authorization: `Bearer ${local_state.bearer_token}` }, false)
+        .execute();
+    if (responses[0] === undefined || responses[1] === undefined) {
+        throw new ScriptException("unreachable");
     }
-    const accountAuthClientId = match_result[1];
-    const auth = local_utility.toBase64(string_to_bytes(`${accountAuthClientId}:`));
-    function get_bearer() {
-        if (bridge.isLoggedIn()) {
-            const response = JSON.parse(local_http.POST("https://www.crunchyroll.com/auth/v1/token", "grant_type=etp_rt_cookie", {
-                Authorization: `Basic ${auth}`,
-                "Content-Type": "application/x-www-form-urlencoded",
-            }, true).body);
-            return response.access_token;
-        }
-        else {
-            const response = JSON.parse(local_http.POST("https://www.crunchyroll.com/auth/v1/token", "grant_type=client_id", {
-                Authorization: `Basic ${auth}`,
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Etp-Anonymous-Id": "6ba29c34-469b-4597-9d0d-9bbc672fb2d7"
-            }, false).body);
-            return response.access_token;
-        }
+    const episode_response = JSON.parse(responses[0].body);
+    const play_response = JSON.parse(responses[1].body);
+    const metadata = episode_response.data[0];
+    if (metadata === undefined) {
+        throw new ScriptException("missing episode metadata");
     }
-    const bearer = get_bearer();
-    // log(response.access_token)
-    const play_response = JSON.parse(local_http.GET(
-    // `https://cr-play-service.prd.crunchyrollsvc.com/v1/${video_id}/web/chrome/play`,
-    `https://cr-play-service.prd.crunchyrollsvc.com/v1/${video_id}/web/firefox/play`, { Authorization: `Bearer ${bearer}` }, false).body);
+    const image = metadata.images.thumbnail[0];
+    if (image === undefined) {
+        throw new ScriptException("missing episode thumbnail");
+    }
+    if (metadata.episode_metadata.is_premium_only && bridge.isLoggedIn() === false) {
+        throw new LoginRequiredException("Login with a premium account to watch");
+    }
+    log(play_response);
+    const thumbnails = new Thumbnails(image.map((image) => new Thumbnail(image.source, image.height)));
     return new PlatformVideoDetails({
-        id: new PlatformID(PLATFORM, "vid", plugin.config.id),
-        name: "string",
-        thumbnails: new Thumbnails([new Thumbnail("blob", HARDCODED_THUMBNAIL_QUALITY)]),
-        author: new PlatformAuthorLink(new PlatformID(PLATFORM, "erg", plugin.config.id), "ererh", "erhergh"),
-        datetime: 11,
+        id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
+        name: metadata.title,
+        thumbnails: thumbnails,
+        author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
+        datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
         url,
-        duration: 11,
-        viewCount: 11,
+        duration: metadata.episode_metadata.duration_ms / 1000,
         isLive: false,
         shareUrl: url,
-        description: "string",
+        description: metadata.description,
         video: new VideoSourceDescriptor([new DashWidevineSource({
-                name: "string",
-                duration: 11,
+                name: "Dash",
+                duration: metadata.episode_metadata.duration_ms / 1000,
                 url: play_response.url,
                 requestModifier: {
+                    // headers for the manifest
                     headers: {
-                        Authorization: `Bearer ${bearer}`
+                        Authorization: `Bearer ${local_state.bearer_token}`
                     }
                 },
-                bearerToken: bearer,
-                // licenseUri: "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine",
-                licenseUri: "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine?specConform=true",
-                // licenseUri: "https://lic.drmtoday.com/license-proxy-widevine/cenc",
-                token: play_response.token,
-                video_id
+                decodeLicenseResponse: true,
+                // headers for the license request
+                licenseHeaders: {
+                    "Authorization": `Bearer ${local_state.bearer_token}`,
+                    "X-Cr-Content-Id": video_id,
+                    "X-Cr-Video-Token": play_response.token
+                },
+                licenseUri: "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine?specConform=true"
             })]),
-        rating: new RatingLikes(11),
+        // TODO subtitles will be import to get right considering the vast options available likely subtitles and closed captions
+        subtitles: [],
+        // TODO I'm not usre if total is the total interactions or the total upvotes
+        // consider using the star rating instead of the like and dislike rating
+        rating: new RatingLikes(metadata.rating.total),
+        // TODO add recommendations section (probably the "next episode" section)
         getContentRecommendations: () => new ContentPager([], false)
     });
 }
