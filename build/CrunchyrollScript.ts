@@ -133,7 +133,7 @@ function enable(conf: SourceConfig, settings: Settings, saved_state?: string | n
 //#endregion
 
 function disable() {
-    log("Spotify log: disabling")
+    log("Crunchyroll log: disabling")
 }
 
 function saveState() {
@@ -214,11 +214,9 @@ function getContentDetails(url: string) {
         throw new ScriptException("missing episode thumbnail")
     }
 
-    if(metadata.episode_metadata.is_premium_only && bridge.isLoggedIn() === false){
+    if (metadata.episode_metadata.is_premium_only && bridge.isLoggedIn() === false) {
         throw new LoginRequiredException("Login with a premium account to watch")
     }
-
-    log(play_response)
 
     const thumbnails = new Thumbnails(image.map((image) => new Thumbnail(image.source, image.height)))
 
@@ -247,14 +245,29 @@ function getContentDetails(url: string) {
                     Authorization: `Bearer ${local_state.bearer_token}`
                 }
             },
-            decodeLicenseResponse: true,
-            // headers for the license request
-            licenseHeaders: {
-                "Authorization": `Bearer ${local_state.bearer_token}`,
-                "X-Cr-Content-Id": video_id,
-                "X-Cr-Video-Token": play_response.token
-            },
-            licenseUri: "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine?specConform=true"
+            licenseUri: "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine?specConform=true",
+            getLicenseRequestExecutor: () => {
+                return {
+                    executeRequest: (url, _headers, _method, license_request_data) => {
+                        if (license_request_data === null) {
+                            throw new ScriptException("missing license request data")
+                        }
+                        const response = local_http.POST(
+                            url,
+                            license_request_data,
+                            {
+                                "Authorization": `Bearer ${local_state.bearer_token}`,
+                                "X-Cr-Content-Id": video_id,
+                                "X-Cr-Video-Token": play_response.token,
+                                "Content-Type": "application/octet-stream"
+                            },
+                            false
+                        ).body
+
+                        return local_utility.fromBase64(response)
+                    }
+                }
+            }
         })]),
         // TODO subtitles will be import to get right considering the vast options available likely subtitles and closed captions
         subtitles: [],
@@ -304,7 +317,7 @@ function log_passthrough<T>(value: T): T {
 function assert_exhaustive(value: never): void
 function assert_exhaustive(value: never, exception_message: string): ScriptException
 function assert_exhaustive(value: never, exception_message?: string): ScriptException | undefined {
-    log(["Spotify log:", value])
+    log(["Crunchyroll log:", value])
     if (exception_message !== undefined) {
         return new ScriptException(exception_message)
     }

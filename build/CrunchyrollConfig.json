@@ -19,7 +19,8 @@
     "allowEval": false,
     "allowUrls": [
         "www.crunchyroll.com",
-        "cr-play-service.prd.crunchyrollsvc.com"
+        "cr-play-service.prd.crunchyrollsvc.com",
+        "cr-license-proxy.prd.crunchyrollsvc.com"
     ],
     "authentication": {
         "loginUrl": "https://sso.crunchyroll.com/login",
