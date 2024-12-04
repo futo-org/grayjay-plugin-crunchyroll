@@ -1,5 +1,7 @@
 # Crunchyroll
 
+Click [here](grayjay://plugin/https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json) to install
+
 ## Development
 
 1. Dev dependencies (`node` and `npm`)
