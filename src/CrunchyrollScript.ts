@@ -142,9 +142,47 @@ function saveState() {
 
 //#region home
 function getHome() {
-    return new ContentPager([
-        getContentDetails("https://www.crunchyroll.com/watch/GQJUG97WW/the-monster-of-the-abyss")
-    ], false)
+
+    let results = [] as IPlatformContent[];
+
+    const headers = {
+        Authorization: `Bearer ${local_state.bearer_token}`
+    }
+
+    const personalizationResponse = http.GET(`https://www.crunchyroll.com/personalization/v1/personalization?collectionId=Curation_Collections%2FEditorial%2FOctober_2024_Seasonal_Sampler&vendor=thinkanalytics`, headers, true) as any;
+
+    if(personalizationResponse.isOk) {
+        const recommendations = JSON.parse(personalizationResponse.body).recommendations ?? [];
+
+        const ids = recommendations.map((i: { contentItemId: any }) => i.contentItemId);
+        const episodeResponse = http.GET(`https://www.crunchyroll.com/content/v2/cms/objects/${ids.join(",")}?ratings=true`, headers, true) as any;
+        const episodes: any[] = JSON.parse(episodeResponse.body)?.data ?? [];
+        
+        results = episodes.map(metadata => {
+            
+            const t = metadata.images.thumbnail?.[0]?.map((image: { source: string; height: number }) => new Thumbnail(image.source, image.height)) ?? [];
+            const thumbnails = new Thumbnails(t);
+            const url = `https://www.crunchyroll.com/watch/${metadata.id}/${metadata.slug_title}`;
+            
+            return new PlatformVideo({
+                id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
+                name: metadata.title,
+                thumbnails: thumbnails,
+                author: new PlatformAuthorLink(
+                    new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id),
+                    metadata.episode_metadata.series_title,
+                    `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`
+                ),
+                datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
+                url,
+                duration: metadata.episode_metadata.duration_ms / 1000,
+                isLive: false,
+                shareUrl: url
+            })
+        });  
+    }
+
+    return new ContentPager(results, false)
 }
 //#endregion
 
@@ -299,14 +337,6 @@ function getUserSubscriptions(): string[] {
 //#endregion
 
 //#region utilities
-/**
- * Converts seconds to the timestamp format used in WebVTT
- * @param seconds 
- * @returns 
- */
-function milliseconds_to_WebVTT_timestamp(milliseconds: number) {
-    return new Date(milliseconds).toISOString().substring(11, 23)
-}
 function assert_never(value: never) {
     log(value)
 }
@@ -332,7 +362,4 @@ function string_to_bytes(str: string): Uint8Array {
 }
 //#endregion
 
-console.log(assert_exhaustive, assert_never, log_passthrough, milliseconds_to_WebVTT_timestamp)
-// export statements are removed during build step
-// used for unit testing in CrunchyrollScript.test.ts
-export { milliseconds_to_WebVTT_timestamp }
+console.log(assert_exhaustive, assert_never, log_passthrough)

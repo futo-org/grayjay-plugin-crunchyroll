@@ -4,7 +4,7 @@ import assert from "node:assert"
 // initializes global state
 import "@kaidelorenzo/grayjay-polyfill"
 
-import { milliseconds_to_WebVTT_timestamp } from "./CrunchyrollScript.js"
+// import { milliseconds_to_WebVTT_timestamp } from "./CrunchyrollScript.js"
 //#endregion
 
 describe("script module", { skip: false }, () => {
@@ -15,8 +15,8 @@ describe("script module", { skip: false }, () => {
         source.disable()
         assert.strictEqual("11", (11).toString())
     })
-    test("test milliseconds conversion", { skip: false }, () => {
-        const timestamp = milliseconds_to_WebVTT_timestamp(12345)
-        assert.strictEqual(timestamp, "00:00:12.345")
-    })
+    // test("test milliseconds conversion", { skip: false }, () => {
+    //     const timestamp = milliseconds_to_WebVTT_timestamp(12345)
+    //     assert.strictEqual(timestamp, "00:00:12.345")
+    // })
 })
