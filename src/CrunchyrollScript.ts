@@ -2,9 +2,10 @@
 import {
     type State,
     type SearchTypes,
-    type CrunchyrollSource,
     type Settings,
     EpisodeResponse,
+    Config,
+    PlatformLockedContent,
 } from "./types.js"
 
 const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]*?)\//
@@ -18,8 +19,6 @@ const PLATFORM = "Crunchyroll" as const
 // const HARDCODED_EMPTY_STRING = "" as const
 // const HARDCODED_THUMBNAIL_QUALITY = 1080 as const
 
-const local_http = http
-const local_utility = utility
 
 // set missing constants
 Type.Order.Chronological = "Latest releases"
@@ -29,13 +28,15 @@ Type.Order.Favorites = "Most favorited"
 Type.Feed.Playlists = "PLAYLISTS"
 Type.Feed.Albums = "ALBUMS"
 
-let local_settings: Settings
+let local_settings: any
 /** State */
 let local_state: State
+let config: Config = undefined;
+let UNAVAILABLE_OPTIONS: string[] = [];
 //#endregion
 
 //#region source methods
-const local_source: CrunchyrollSource = {
+const local_source: any = {
     enable,
     disable,
     saveState,
@@ -64,7 +65,12 @@ function init_source<
 //#endregion
 
 //#region enable
-function enable(conf: SourceConfig, settings: Settings, saved_state?: string | null) {
+function enable(conf: Config, settings: Settings, saved_state?: string | null) {
+
+    config = conf;
+
+    UNAVAILABLE_OPTIONS = loadOptionsForSetting("premiumContentUnavailableIndex");
+
     if (IS_TESTING) {
         log("IS_TESTING true")
         log("logging configuration")
@@ -82,7 +88,7 @@ function enable(conf: SourceConfig, settings: Settings, saved_state?: string | n
         const state: State = JSON.parse(saved_state)
         local_state = state
     } else {
-        const html = local_http.GET("https://www.crunchyroll.com/", {}, true).body
+        const html = http.GET("https://www.crunchyroll.com/", {}, true).body
 
         const match_result = html.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/)
         if (match_result === null || match_result[1] === undefined) {
@@ -91,7 +97,7 @@ function enable(conf: SourceConfig, settings: Settings, saved_state?: string | n
 
         const accountAuthClientId = match_result[1]
 
-        const auth = local_utility.toBase64(string_to_bytes(`${accountAuthClientId}:`))
+        const auth = utility.toBase64(string_to_bytes(`${accountAuthClientId}:`))
 
         const token_url = "https://www.crunchyroll.com/auth/v1/token" as const
 
@@ -100,7 +106,7 @@ function enable(conf: SourceConfig, settings: Settings, saved_state?: string | n
         // https://gitlab.futo.org/videostreaming/plugins/spotify/-/blob/master/src/SpotifyScript.ts?ref_type=heads#L255
         function get_bearer() {
             if (bridge.isLoggedIn()) {
-                const response: { readonly access_token: string } = JSON.parse(local_http.POST(
+                const response: { readonly access_token: string } = JSON.parse(http.POST(
                     token_url,
                     "grant_type=etp_rt_cookie",
                     {
@@ -112,7 +118,7 @@ function enable(conf: SourceConfig, settings: Settings, saved_state?: string | n
 
                 return response.access_token
             } else {
-                const response: { readonly access_token: string } = JSON.parse(local_http.POST(
+                const response: { readonly access_token: string } = JSON.parse(http.POST(
                     token_url,
                     "grant_type=client_id",
                     {
@@ -151,21 +157,22 @@ function getHome() {
 
     const personalizationResponse = http.GET(`https://www.crunchyroll.com/personalization/v1/personalization?collectionId=Curation_Collections%2FEditorial%2FOctober_2024_Seasonal_Sampler&vendor=thinkanalytics`, headers, true) as any;
 
-    if(personalizationResponse.isOk) {
+    if (personalizationResponse.isOk) {
         const recommendations = JSON.parse(personalizationResponse.body).recommendations ?? [];
 
         const ids = recommendations.map((i: { contentItemId: any }) => i.contentItemId);
         const episodeResponse = http.GET(`https://www.crunchyroll.com/content/v2/cms/objects/${ids.join(",")}?ratings=true`, headers, true) as any;
         const episodes: any[] = JSON.parse(episodeResponse.body)?.data ?? [];
-        
+
         results = episodes.map(metadata => {
-            
+
             const t = metadata.images.thumbnail?.[0]?.map((image: { source: string; height: number }) => new Thumbnail(image.source, image.height)) ?? [];
+
             const thumbnails = new Thumbnails(t);
             const url = `https://www.crunchyroll.com/watch/${metadata.id}/${metadata.slug_title}`;
-            
+
             return new PlatformVideo({
-                id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
+                id: new PlatformID(PLATFORM, metadata.id.toString(), plugin.config.id),
                 name: metadata.title,
                 thumbnails: thumbnails,
                 author: new PlatformAuthorLink(
@@ -179,7 +186,7 @@ function getHome() {
                 isLive: false,
                 shareUrl: url
             })
-        });  
+        });
     }
 
     return new ContentPager(results, false)
@@ -197,9 +204,83 @@ function getSearchCapabilities() {
     )
 }
 function search(query: string, type: SearchTypes | null, order: Order | null, filters: FilterQuery<string> | null): ContentPager {
-    log(query, order, filters, type)
+    log(query, order, filters, type);
 
-    return new ContentPager([], false)
+    const searchQuery = query.split(" ").join("+");
+
+    const url = `https://www.crunchyroll.com/content/v2/discover/search?q=${searchQuery}&n=100&type=episode&ratings=true&locale=en-US`;
+
+    const headers = {
+        Authorization: `Bearer ${local_state.bearer_token}`
+    }
+
+    const response = http.GET(url, headers, true) as any;
+
+    const contentList: any[] = [];
+
+    if (response.isOk) {
+        const searchResults = JSON.parse(response.body)?.data ?? [];
+
+        searchResults.forEach((searchResult: any) => {
+
+            // handle other types in the future
+            if (searchResult.type === "episode") {
+
+                searchResult.items.forEach((metadata: any) => {
+                    // const metadata = result;
+                    const t = metadata?.images?.thumbnail?.[0]?.map((image: { source: string; height: number }) => new Thumbnail(image.source, image.height)) ?? [];
+
+                    const thumbnails = new Thumbnails(t);
+                    const url = `https://www.crunchyroll.com/watch/${metadata.id}/${metadata.slug_title}`;
+
+
+                    const isPremiumOnly = metadata.episode_metadata.availability_status === 'premium_only';
+                    const isLoggedIn = bridge.isLoggedIn();
+                    const premiumContentUnavailableOption = UNAVAILABLE_OPTIONS[local_settings.premiumContentUnavailableIndex];
+                    const userIsPremium = false;//TODO
+
+                    const shouldShowContent = !isPremiumOnly || userIsPremium || premiumContentUnavailableOption === "As regular content";
+
+                    if (shouldShowContent) {
+                        contentList.push(new PlatformVideo({
+                            id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
+                            name: metadata.title,
+                            thumbnails: thumbnails,
+                            author: new PlatformAuthorLink(
+                                new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id),
+                                metadata.episode_metadata.series_title,
+                                `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`
+                            ),
+                            datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
+                            url,
+                            duration: metadata.episode_metadata.duration_ms / 1000,
+                            isLive: false,
+                            shareUrl: url
+                        }));
+                    } else if (premiumContentUnavailableOption === "As locked Content") {
+
+                        const lockDescription = isLoggedIn ? 'This content is only available to premium users' : 'Login with a premium account to watch';
+                        const unlockUrl = isLoggedIn ? "https://www.crunchyroll.com/premium" : "";
+
+                        contentList.push(new PlatformLockedContent({
+                            id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
+                            name: metadata.title,
+                            author: new PlatformAuthorLink(
+                                new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id),
+                                metadata.episode_metadata.series_title,
+                                `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`
+                            ),
+                            datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
+                            lockDescription,
+                            unlockUrl,
+                        }));
+                    }
+                });
+            }
+        });
+    }
+
+    return new ContentPager(contentList, false)
 }
 //#endregion
 
@@ -217,7 +298,7 @@ function getContentDetails(url: string) {
         throw new ScriptException("regex error")
     }
 
-    const responses = local_http
+    const responses = http
         .batch()
         .GET(
             `https://www.crunchyroll.com/content/v2/cms/objects/${video_id}?ratings=true`,
@@ -290,7 +371,7 @@ function getContentDetails(url: string) {
                         if (license_request_data === null) {
                             throw new ScriptException("missing license request data")
                         }
-                        const response = local_http.POST(
+                        const response = http.POST(
                             url,
                             license_request_data,
                             {
@@ -302,7 +383,7 @@ function getContentDetails(url: string) {
                             false
                         ).body
 
-                        return local_utility.fromBase64(response)
+                        return utility.fromBase64(response)
                     }
                 }
             }
@@ -359,6 +440,10 @@ function string_to_bytes(str: string): Uint8Array {
         result.push(str.charCodeAt(i))
     }
     return new Uint8Array(result)
+}
+function loadOptionsForSetting(settingKey: string): string[] {
+    return config?.settings?.find((s) => s.variable == settingKey)
+        ?.options ?? [];
 }
 //#endregion
 

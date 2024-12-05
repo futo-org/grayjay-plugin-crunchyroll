@@ -63,4 +63,37 @@ export type EpisodeResponse = {
         }
     }[]
 }
+
+export type Config = {
+    readonly id: string,
+    readonly settings: any[],
+} | undefined;
+
+
 //#endregion
+type PlatformLockedContentParams = {
+    id: PlatformID;
+    name: string;
+    author: PlatformAuthorLink;
+    datetime: number; // Timestamp in seconds
+    lockDescription: string; // Optional, inferred from context
+    unlockUrl: string; // Optional, inferred from context
+  };
+  
+  export class PlatformLockedContent {
+    id: PlatformID;
+    name: string;
+    author: PlatformAuthorLink;
+    datetime: number;
+    lockDescription: string;
+    unlockUrl: string;
+  
+    constructor(params: PlatformLockedContentParams) {
+      this.id = params.id;
+      this.name = params.name;
+      this.author = params.author;
+      this.datetime = params.datetime;
+      this.lockDescription = params?.lockDescription;
+      this.unlockUrl = params?.unlockUrl;
+    }
+  }

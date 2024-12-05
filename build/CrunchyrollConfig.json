@@ -5,7 +5,7 @@
     "authorUrl": "https://futo.org",
     "platformUrl": "https://crunchyroll.com",
     "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
-    "repositoryUrl": "https://gitlab.futo.org/videostreaming/plugins/crunchyroll",
+    "repositoryUrl": "https://futo.org",
     "scriptUrl": "./CrunchyrollScript.js",
     "version": 1,
     "iconUrl": "./CrunchyrollIcon.png",
@@ -27,5 +27,19 @@
         "cookiesToFind": [
             "etp_rt"
         ]
-    }
+    },
+    "settings": [
+        {
+            "variable": "premiumContentUnavailableIndex",
+            "name": "Premium Content Unavailable",
+            "description": "How to handle premiun content not available to current user",
+            "type": "Dropdown",
+            "default": "0",
+            "options": [
+                "As locked Content",
+                "As regular content",
+                "Hide"
+            ]
+          }
+    ]
 }

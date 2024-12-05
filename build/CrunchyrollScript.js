@@ -1,3 +1,5 @@
+//#region constants
+// import { PlatformLockedContent, } from "./types.js";
 const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]*?)\//;
 const SERIES_URL_PREFIX = "https://www.crunchyroll.com/series/";
 const PLATFORM = "Crunchyroll";
@@ -5,8 +7,6 @@ const PLATFORM = "Crunchyroll";
 // const HARDCODED_ZERO = 0 as const
 // const HARDCODED_EMPTY_STRING = "" as const
 // const HARDCODED_THUMBNAIL_QUALITY = 1080 as const
-const local_http = http;
-const local_utility = utility;
 // set missing constants
 Type.Order.Chronological = "Latest releases";
 Type.Order.Views = "Most played";
@@ -16,6 +16,8 @@ Type.Feed.Albums = "ALBUMS";
 let local_settings;
 /** State */
 let local_state;
+let config = undefined;
+let UNAVAILABLE_OPTIONS = [];
 //#endregion
 //#region source methods
 const local_source = {
@@ -41,6 +43,8 @@ function init_source(local_source) {
 //#endregion
 //#region enable
 function enable(conf, settings, saved_state) {
+    config = conf;
+    UNAVAILABLE_OPTIONS = loadOptionsForSetting("premiumContentUnavailableIndex");
     if (IS_TESTING) {
         log("IS_TESTING true");
         log("logging configuration");
@@ -57,27 +61,27 @@ function enable(conf, settings, saved_state) {
         local_state = state;
     }
     else {
-        const html = local_http.GET("https://www.crunchyroll.com/", {}, true).body;
+        const html = http.GET("https://www.crunchyroll.com/", {}, true).body;
         const match_result = html.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
         if (match_result === null || match_result[1] === undefined) {
             throw new ScriptException("regex error");
         }
         const accountAuthClientId = match_result[1];
-        const auth = local_utility.toBase64(string_to_bytes(`${accountAuthClientId}:`));
+        const auth = utility.toBase64(string_to_bytes(`${accountAuthClientId}:`));
         const token_url = "https://www.crunchyroll.com/auth/v1/token";
         // TODO the bearer token likely needs to be refreshed after some amount of time
         // here is an example for Spotify if that's helpful
         // https://gitlab.futo.org/videostreaming/plugins/spotify/-/blob/master/src/SpotifyScript.ts?ref_type=heads#L255
         function get_bearer() {
             if (bridge.isLoggedIn()) {
-                const response = JSON.parse(local_http.POST(token_url, "grant_type=etp_rt_cookie", {
+                const response = JSON.parse(http.POST(token_url, "grant_type=etp_rt_cookie", {
                     Authorization: `Basic ${auth}`,
                     "Content-Type": "application/x-www-form-urlencoded",
                 }, true).body);
                 return response.access_token;
             }
             else {
-                const response = JSON.parse(local_http.POST(token_url, "grant_type=client_id", {
+                const response = JSON.parse(http.POST(token_url, "grant_type=client_id", {
                     Authorization: `Basic ${auth}`,
                     "Content-Type": "application/x-www-form-urlencoded",
                     "Etp-Anonymous-Id": "6ba29c34-469b-4597-9d0d-9bbc672fb2d7"
@@ -112,7 +116,7 @@ function getHome() {
             const thumbnails = new Thumbnails(t);
             const url = `https://www.crunchyroll.com/watch/${metadata.id}/${metadata.slug_title}`;
             return new PlatformVideo({
-                id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
+                id: new PlatformID(PLATFORM, metadata.id.toString(), plugin.config.id),
                 name: metadata.title,
                 thumbnails: thumbnails,
                 author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
@@ -135,7 +139,58 @@ function getSearchCapabilities() {
 }
 function search(query, type, order, filters) {
     log(query, order, filters, type);
-    return new ContentPager([], false);
+    const searchQuery = query.split(" ").join("+");
+    const url = `https://www.crunchyroll.com/content/v2/discover/search?q=${searchQuery}&n=100&type=episode&ratings=true&locale=en-US`;
+    const headers = {
+        Authorization: `Bearer ${local_state.bearer_token}`
+    };
+    const response = http.GET(url, headers, true);
+    const contentList = [];
+    if (response.isOk) {
+        const searchResults = JSON.parse(response.body)?.data ?? [];
+        searchResults.forEach((searchResult) => {
+            // handle other types in the future
+            if (searchResult.type === "episode") {
+                searchResult.items.forEach((metadata) => {
+                    // const metadata = result;
+                    const t = metadata?.images?.thumbnail?.[0]?.map((image) => new Thumbnail(image.source, image.height)) ?? [];
+                    const thumbnails = new Thumbnails(t);
+                    const url = `https://www.crunchyroll.com/watch/${metadata.id}/${metadata.slug_title}`;
+                    const isPremiumOnly = metadata.episode_metadata.availability_status === 'premium_only';
+                    const isLoggedIn = bridge.isLoggedIn();
+                    const premiumContentUnavailableOption = UNAVAILABLE_OPTIONS[local_settings.premiumContentUnavailableIndex];
+                    const userIsPremium = false; //TODO
+                    const shouldShowContent = !isPremiumOnly || userIsPremium || premiumContentUnavailableOption === "As regular content";
+                    if (shouldShowContent) {
+                        contentList.push(new PlatformVideo({
+                            id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
+                            name: metadata.title,
+                            thumbnails: thumbnails,
+                            author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
+                            datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
+                            url,
+                            duration: metadata.episode_metadata.duration_ms / 1000,
+                            isLive: false,
+                            shareUrl: url
+                        }));
+                    }
+                    else if (premiumContentUnavailableOption === "As locked Content") {
+                        const lockDescription = isLoggedIn ? 'This content is only available to premium users' : 'Login with a premium account to watch';
+                        const unlockUrl = isLoggedIn ? "https://www.crunchyroll.com/premium" : "";
+                        contentList.push(new PlatformLockedContent({
+                            id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
+                            name: metadata.title,
+                            author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
+                            datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
+                            lockDescription,
+                            unlockUrl,
+                        }));
+                    }
+                });
+            }
+        });
+    }
+    return new ContentPager(contentList, false);
 }
 //#endregion
 //#region content
@@ -151,7 +206,7 @@ function getContentDetails(url) {
     if (video_id === undefined) {
         throw new ScriptException("regex error");
     }
-    const responses = local_http
+    const responses = http
         .batch()
         .GET(`https://www.crunchyroll.com/content/v2/cms/objects/${video_id}?ratings=true`, { Authorization: `Bearer ${local_state.bearer_token}` }, false)
         .GET(`https://cr-play-service.prd.crunchyrollsvc.com/v1/${video_id}/web/firefox/play`, { Authorization: `Bearer ${local_state.bearer_token}` }, false)
@@ -201,13 +256,13 @@ function getContentDetails(url) {
                             if (license_request_data === null) {
                                 throw new ScriptException("missing license request data");
                             }
-                            const response = local_http.POST(url, license_request_data, {
+                            const response = http.POST(url, license_request_data, {
                                 "Authorization": `Bearer ${local_state.bearer_token}`,
                                 "X-Cr-Content-Id": video_id,
                                 "X-Cr-Video-Token": play_response.token,
                                 "Content-Type": "application/octet-stream"
                             }, false).body;
-                            return local_utility.fromBase64(response);
+                            return utility.fromBase64(response);
                         }
                     };
                 }
@@ -259,7 +314,10 @@ function string_to_bytes(str) {
     }
     return new Uint8Array(result);
 }
+function loadOptionsForSetting(settingKey) {
+    return config?.settings?.find((s) => s.variable == settingKey)
+        ?.options ?? [];
+}
 //#endregion
 console.log(assert_exhaustive, assert_never, log_passthrough);
-// export {};
 //# sourceMappingURL=http://localhost:8080/build/CrunchyrollScript.js.map
