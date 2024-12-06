@@ -8,7 +8,8 @@ import {
     PlatformLockedContent,
 } from "./types.js"
 
-const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]*?)\//
+const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]*?)\//;
+const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/series\/([A-Z0-9]+)(?:\/|$)/;
 
 const SERIES_URL_PREFIX = "https://www.crunchyroll.com/series/" as const
 
@@ -41,6 +42,8 @@ const local_source: any = {
     disable,
     saveState,
     getHome,
+    getChannel,
+    getChannelContents,
     search,
     getSearchCapabilities,
     isContentDetailsUrl,
@@ -178,7 +181,7 @@ function getHome() {
                 author: new PlatformAuthorLink(
                     new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id),
                     metadata.episode_metadata.series_title,
-                    `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`
+                    `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`
                 ),
                 datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
                 url,
@@ -249,7 +252,7 @@ function search(query: string, type: SearchTypes | null, order: Order | null, fi
                             author: new PlatformAuthorLink(
                                 new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id),
                                 metadata.episode_metadata.series_title,
-                                `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`
+                                `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`
                             ),
                             datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
                             url,
@@ -268,7 +271,7 @@ function search(query: string, type: SearchTypes | null, order: Order | null, fi
                             author: new PlatformAuthorLink(
                                 new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id),
                                 metadata.episode_metadata.series_title,
-                                `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`
+                                `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`
                             ),
                             datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
                             lockDescription,
@@ -281,6 +284,37 @@ function search(query: string, type: SearchTypes | null, order: Order | null, fi
     }
 
     return new ContentPager(contentList, false)
+}
+
+function getChannel(url: string) {
+    
+    const seriesId = extractSeriesId(url);
+
+    if (!seriesId) {
+        throw new ScriptException("Invalid channel URL");
+    }
+
+    const channel: any =  getObjectMetadata(seriesId, { first: true });
+    const thumbnails = channel?.images?.poster_tall?.[0] ?? [{ source: '' }];
+    const banners = channel?.images?.poster_wide?.[0] ?? [{ source: '' }];
+
+    return new PlatformChannel({
+        id: new PlatformID(PLATFORM, seriesId, plugin.config.id),
+        name: channel.title,
+        thumbnail: thumbnails[thumbnails.length-1].source, //TODO: add setting to select thumbnail quality
+        banner: banners[banners.length-1].source, //TODO: add setting to select thumbnail quality
+        subscribers: 0,
+        description: channel?.description ?? '',
+        url,
+        // links
+      });
+
+    
+}
+
+function getChannelContents(url: string) {
+    console.log("getChannelContents", url);
+    return new ContentPager([], false)
 }
 //#endregion
 
@@ -346,7 +380,7 @@ function getContentDetails(url: string) {
         author: new PlatformAuthorLink(
             new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id),
             metadata.episode_metadata.series_title,
-            `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`
+            `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`
         ),
         datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
         url,
@@ -406,8 +440,14 @@ function isPlaylistUrl(url: string): boolean {
 //#endregion
 
 //#region channel
-function isChannelUrl(url: string): boolean {
-    return url === "kpr"
+/**
+ * Checks if a given URL is a Crunchyroll series URL.
+ *
+ * @param {string} url - The URL to check.
+ * @returns {boolean} - True if the URL is a series URL, false otherwise.
+ */
+function isChannelUrl(url:string): boolean {  
+    return SERIES_REGEX.test(url);
 }
 //#endregion
 
@@ -444,6 +484,37 @@ function string_to_bytes(str: string): Uint8Array {
 function loadOptionsForSetting(settingKey: string): string[] {
     return config?.settings?.find((s) => s.variable == settingKey)
         ?.options ?? [];
+}
+
+/**
+ * Extracts the series ID from a Crunchyroll series URL.
+ *
+ * @param {string} url - The Crunchyroll series URL.
+ * @returns {string | null} - The extracted series ID or null if not found.
+ */
+function extractSeriesId(url:string) {
+    const match = url.match(SERIES_REGEX);
+    return match ? match[1] : null;
+}
+
+function getObjectMetadata(id:string, options: { first: boolean} = { first: false }) {
+    
+    const headers = {
+        Authorization: `Bearer ${local_state.bearer_token}`
+    }
+    const response = http.GET(`https://www.crunchyroll.com/content/v2/cms/objects/${id}?ratings=true`, headers, false);
+
+    if (!response.isOk) {
+        throw new ScriptException(`Failed to fetch metadata for content with ID ${id}`);
+    }
+
+    const data = JSON.parse(response.body)?.data ?? [];
+
+    if(data.length && options.first) {
+        return data[0];
+    }
+
+    return data;
 }
 //#endregion
 

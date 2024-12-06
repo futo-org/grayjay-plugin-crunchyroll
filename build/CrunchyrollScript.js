@@ -1,6 +1,7 @@
 //#region constants
 // import { PlatformLockedContent, } from "./types.js";
 const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]*?)\//;
+const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/series\/([A-Z0-9]+)(?:\/|$)/;
 const SERIES_URL_PREFIX = "https://www.crunchyroll.com/series/";
 const PLATFORM = "Crunchyroll";
 // const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0" as const
@@ -25,6 +26,8 @@ const local_source = {
     disable,
     saveState,
     getHome,
+    getChannel,
+    getChannelContents,
     search,
     getSearchCapabilities,
     isContentDetailsUrl,
@@ -119,7 +122,7 @@ function getHome() {
                 id: new PlatformID(PLATFORM, metadata.id.toString(), plugin.config.id),
                 name: metadata.title,
                 thumbnails: thumbnails,
-                author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
+                author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
                 datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
                 url,
                 duration: metadata.episode_metadata.duration_ms / 1000,
@@ -166,7 +169,7 @@ function search(query, type, order, filters) {
                             id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
                             name: metadata.title,
                             thumbnails: thumbnails,
-                            author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
+                            author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
                             datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
                             url,
                             duration: metadata.episode_metadata.duration_ms / 1000,
@@ -180,7 +183,7 @@ function search(query, type, order, filters) {
                         contentList.push(new PlatformLockedContent({
                             id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
                             name: metadata.title,
-                            author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
+                            author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
                             datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
                             lockDescription,
                             unlockUrl,
@@ -191,6 +194,29 @@ function search(query, type, order, filters) {
         });
     }
     return new ContentPager(contentList, false);
+}
+function getChannel(url) {
+    const seriesId = extractSeriesId(url);
+    if (!seriesId) {
+        throw new ScriptException("Invalid channel URL");
+    }
+    const channel = getObjectMetadata(seriesId, { first: true });
+    const thumbnails = channel?.images?.poster_tall?.[0] ?? [{ source: '' }];
+    const banners = channel?.images?.poster_wide?.[0] ?? [{ source: '' }];
+    return new PlatformChannel({
+        id: new PlatformID(PLATFORM, seriesId, plugin.config.id),
+        name: channel.title,
+        thumbnail: thumbnails[thumbnails.length - 1].source, //TODO: add setting to select thumbnail quality
+        banner: banners[banners.length - 1].source, //TODO: add setting to select thumbnail quality
+        subscribers: 0,
+        description: channel?.description ?? '',
+        url,
+        // links
+    });
+}
+function getChannelContents(url) {
+    console.log("getChannelContents", url);
+    return new ContentPager([], false);
 }
 //#endregion
 //#region content
@@ -232,7 +258,7 @@ function getContentDetails(url) {
         id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
         name: metadata.title,
         thumbnails: thumbnails,
-        author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}/${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
+        author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
         datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
         url,
         duration: metadata.episode_metadata.duration_ms / 1000,
@@ -283,8 +309,14 @@ function isPlaylistUrl(url) {
 }
 //#endregion
 //#region channel
+/**
+ * Checks if a given URL is a Crunchyroll series URL.
+ *
+ * @param {string} url - The URL to check.
+ * @returns {boolean} - True if the URL is a series URL, false otherwise.
+ */
 function isChannelUrl(url) {
-    return url === "kpr";
+    return SERIES_REGEX.test(url);
 }
 //#endregion
 //#region other
@@ -317,6 +349,30 @@ function string_to_bytes(str) {
 function loadOptionsForSetting(settingKey) {
     return config?.settings?.find((s) => s.variable == settingKey)
         ?.options ?? [];
+}
+/**
+ * Extracts the series ID from a Crunchyroll series URL.
+ *
+ * @param {string} url - The Crunchyroll series URL.
+ * @returns {string | null} - The extracted series ID or null if not found.
+ */
+function extractSeriesId(url) {
+    const match = url.match(SERIES_REGEX);
+    return match ? match[1] : null;
+}
+function getObjectMetadata(id, options = { first: false }) {
+    const headers = {
+        Authorization: `Bearer ${local_state.bearer_token}`
+    };
+    const response = http.GET(`https://www.crunchyroll.com/content/v2/cms/objects/${id}?ratings=true`, headers, false);
+    if (!response.isOk) {
+        throw new ScriptException(`Failed to fetch metadata for content with ID ${id}`);
+    }
+    const data = JSON.parse(response.body)?.data ?? [];
+    if (data.length && options.first) {
+        return data[0];
+    }
+    return data;
 }
 //#endregion
 console.log(assert_exhaustive, assert_never, log_passthrough);
