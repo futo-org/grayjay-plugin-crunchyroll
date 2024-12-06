@@ -1,13 +1,9 @@
 //#region constants
-// import { PlatformLockedContent, } from "./types.js";
 const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]*?)\//;
 const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/series\/([A-Z0-9]+)(?:\/|$)/;
 const SERIES_URL_PREFIX = "https://www.crunchyroll.com/series/";
 const PLATFORM = "Crunchyroll";
 // const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0" as const
-// const HARDCODED_ZERO = 0 as const
-// const HARDCODED_EMPTY_STRING = "" as const
-// const HARDCODED_THUMBNAIL_QUALITY = 1080 as const
 // set missing constants
 Type.Order.Chronological = "Latest releases";
 Type.Order.Views = "Most played";
@@ -266,33 +262,33 @@ function getContentDetails(url) {
         shareUrl: url,
         description: metadata.description,
         video: new VideoSourceDescriptor([new DashWidevineSource({
-                name: "Dash",
-                duration: metadata.episode_metadata.duration_ms / 1000,
-                url: play_response.url,
-                requestModifier: {
-                    // headers for the manifest
-                    headers: {
-                        Authorization: `Bearer ${local_state.bearer_token}`
-                    }
-                },
-                licenseUri: "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine?specConform=true",
-                getLicenseRequestExecutor: () => {
-                    return {
-                        executeRequest: (url, _headers, _method, license_request_data) => {
-                            if (license_request_data === null) {
-                                throw new ScriptException("missing license request data");
-                            }
-                            const response = http.POST(url, license_request_data, {
-                                "Authorization": `Bearer ${local_state.bearer_token}`,
-                                "X-Cr-Content-Id": video_id,
-                                "X-Cr-Video-Token": play_response.token,
-                                "Content-Type": "application/octet-stream"
-                            }, false).body;
-                            return utility.fromBase64(response);
-                        }
-                    };
+            name: "Dash",
+            duration: metadata.episode_metadata.duration_ms / 1000,
+            url: play_response.url,
+            requestModifier: {
+                // headers for the manifest
+                headers: {
+                    Authorization: `Bearer ${local_state.bearer_token}`
                 }
-            })]),
+            },
+            licenseUri: "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine?specConform=true",
+            getLicenseRequestExecutor: () => {
+                return {
+                    executeRequest: (url, _headers, _method, license_request_data) => {
+                        if (license_request_data === null) {
+                            throw new ScriptException("missing license request data");
+                        }
+                        const response = http.POST(url, license_request_data, {
+                            "Authorization": `Bearer ${local_state.bearer_token}`,
+                            "X-Cr-Content-Id": video_id,
+                            "X-Cr-Video-Token": play_response.token,
+                            "Content-Type": "application/octet-stream"
+                        }, false).body;
+                        return utility.fromBase64(response);
+                    }
+                };
+            }
+        })]),
         // TODO subtitles will be import to get right considering the vast options available likely subtitles and closed captions
         subtitles: [],
         // TODO I'm not usre if total is the total interactions or the total upvotes
@@ -375,5 +371,3 @@ function getObjectMetadata(id, options = { first: false }) {
     return data;
 }
 //#endregion
-console.log(assert_exhaustive, assert_never, log_passthrough);
-//# sourceMappingURL=http://localhost:8080/build/CrunchyrollScript.js.map

@@ -8,9 +8,9 @@ touch $DOCUMENT_ROOT/maintenance.file
 # Swap over the content
 echo "Deploying content..."
 mkdir -p $DOCUMENT_ROOT/Crunchyroll
-cp build/CrunchyrollIcon.png $DOCUMENT_ROOT/Crunchyroll
-cp build/CrunchyrollConfig.json $DOCUMENT_ROOT/Crunchyroll
-cp build/CrunchyrollScript.js $DOCUMENT_ROOT/Crunchyroll
+cp CrunchyrollIcon.png $DOCUMENT_ROOT/Crunchyroll
+cp CrunchyrollConfig.json $DOCUMENT_ROOT/Crunchyroll
+cp CrunchyrollScript.js $DOCUMENT_ROOT/Crunchyroll
 sh sign.sh $DOCUMENT_ROOT/Crunchyroll/CrunchyrollScript.js $DOCUMENT_ROOT/Crunchyroll/CrunchyrollConfig.json
 
 # Notify Cloudflare to wipe the CDN cache
