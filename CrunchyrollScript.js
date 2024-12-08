@@ -577,7 +577,20 @@ function getContentDetails(url) {
             }
         })]),
         // TODO subtitles will be import to get right considering the vast options available likely subtitles and closed captions
-        subtitles: [],
+        subtitles: Object.values(play_response.subtitles).map(subtitleInfo => {
+            return {
+                name: subtitleInfo.language,
+                url: subtitleInfo.url,
+                format: "text/vtt",
+                getSubtitles: () => {
+                    const assSubtitleResponse = http.GET(subtitleInfo.url, {}, false);
+                    if (assSubtitleResponse.isOk) {
+                        const assSubtitle = assSubtitleResponse.body;
+                        return assToVtt(assSubtitle);
+                    }
+                }
+            }
+        }),
         // TODO I'm not usre if total is the total interactions or the total upvotes
         // consider using the star rating instead of the like and dislike rating
         rating: new RatingLikes(metadata.rating.total),
@@ -674,4 +687,39 @@ function objectToUrlEncodedString(obj) {
 
     return encodedParams.join('&');
 }
+
+
+function assToVtt(assContent) {
+
+    function convertTime(assTime) {
+        const [hours, minutes, seconds] = assTime.split(':');
+        const [sec, millis] = seconds.split('.');
+        const millisStr = millis ? millis.padEnd(3, '0') : '000'; // Default to 000 if no milliseconds
+        return `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}:${sec.padStart(2, '0')}.${millisStr}`;
+    }
+
+    const vttLines = ["WEBVTT\n\n"];
+
+    assContent
+        .split(/\r?\n/)
+        .filter(l => /^Dialogue:/.exec(l))
+        .forEach(line => {
+            const parts = line.split(',');
+
+            // Ensure the line has at least 10 parts (in case there are missing fields)
+            if (parts.length >= 10) {
+                const startTime = convertTime(parts[1]);
+                const endTime = convertTime(parts[2]);
+                let text = parts[9].replace(/\\N/g, '\n'); // Handle newlines
+
+                vttLines.push(`${startTime} --> ${endTime}`);
+                vttLines.push(text);
+                vttLines.push(''); // Blank line between captions
+            }
+        })
+
+    return vttLines.join('\n');
+}
+
+
 //#endregion

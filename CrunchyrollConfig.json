@@ -20,7 +20,8 @@
     "allowUrls": [
         "www.crunchyroll.com",
         "cr-play-service.prd.crunchyrollsvc.com",
-        "cr-license-proxy.prd.crunchyrollsvc.com"
+        "cr-license-proxy.prd.crunchyrollsvc.com",
+        "v.vrv.co"
     ],
     "authentication": {
         "loginUrl": "https://sso.crunchyroll.com/login",
