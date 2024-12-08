@@ -5,8 +5,8 @@
     "authorUrl": "https://futo.org",
     "platformUrl": "https://crunchyroll.com",
     "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
-    "repositoryUrl": "https://futo.org",
     "scriptUrl": "./CrunchyrollScript.js",
+    "repositoryUrl": "https://futo.org",
     "version": 1,
     "iconUrl": "./CrunchyrollIcon.png",
     "id": "9bb33039-8580-48d4-9849-21319ae845a4",
@@ -36,8 +36,8 @@
             "type": "Dropdown",
             "default": "0",
             "options": [
-                "As locked Content",
                 "As regular content",
+                "As locked Content",
                 "Hide"
             ]
           }

@@ -1,9 +1,11 @@
 //#region constants
+const PLATFORM = "Crunchyroll";
+const BASE_URL = "https://www.crunchyroll.com";
 const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]*?)\//;
 const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/series\/([A-Z0-9]+)(?:\/|$)/;
 const SERIES_URL_PREFIX = "https://www.crunchyroll.com/series/";
-const PLATFORM = "Crunchyroll";
 const REGEX_INTERNAL_PLAYLIST_URL = /^https:\/\/grayjay\.internal\/Crunchyroll\/playlist\/([A-Z0-9]+)(?:\?.*)?$/;
+const ITEMS_PER_PAGE = 100;
 // const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0" as const
 // set missing constants
 Type.Order.Chronological = "Latest releases";
@@ -100,17 +102,141 @@ function saveState() {
 }
 //#region home
 function getHome() {
-    let results = [];
-    const personalizationResponse = http.GET(`https://www.crunchyroll.com/personalization/v1/personalization?collectionId=Curation_Collections%2FEditorial%2FOctober_2024_Seasonal_Sampler&vendor=thinkanalytics`, local_state.headers, true);
-    if (personalizationResponse.isOk) {
-        const recommendations = JSON.parse(personalizationResponse.body).recommendations ?? [];
-        const ids = recommendations.map((i) => i.contentItemId);
-        const episodeResponse = http.GET(`https://www.crunchyroll.com/content/v2/cms/objects/${ids.join(",")}?ratings=true`, local_state.headers, true);
-        const episodes = JSON.parse(episodeResponse.body)?.data ?? [];
-        results = episodes.map(e => episodeToPlatformVideo(e));
+    class HomeContentVideoPager extends VideoPager {
+        constructor(
+            {
+                videos = [],
+                hasMore = true,
+                context = { offset: 0 },
+            } = {}
+        ) {
+            super(videos, hasMore, context);
+        }
+
+        nextPage() {
+            const locale = local_settings?.preferLocale ?? "en-US";
+            const start = this.context.offset || 0;
+            const isFirstPage = start === 0;
+
+            const query = objectToUrlEncodedString({
+                type: "episode",
+                n: ITEMS_PER_PAGE,
+                start,
+                locale,
+                sort_by: "newly_added",
+                ratings: true,
+            });
+
+            let batchRequests = http.batch();
+            batchRequests.GET(`${BASE_URL}/content/v2/discover/browse?${query}`, local_state.headers);
+
+            if (isFirstPage) {
+                batchRequests.GET(`${BASE_URL}/f/v1/home?locale=${locale}`, local_state.headers, true);
+            }
+
+            const responses = batchRequests.execute();
+
+            if (!responses[0].isOk) {
+                throw new ScriptException(`Failed to fetch discover page. Status: ${responses[0].status}`);
+            }
+
+            const discoverBody = JSON.parse(responses[0].body);
+
+            let allEpisodes = [];
+            if (isFirstPage) {
+                const homeResponse = responses[1];
+                if (!homeResponse.isOk) {
+                    throw new ScriptException(`Failed to fetch home page. Status: ${homeResponse.status}`);
+                }
+
+                const homeBody = JSON.parse(homeResponse.body);
+                const freeToWatchUrls = this.extractFreeToWatchUrls(homeBody);
+                const freeToWatchResponses = this.fetchFreeToWatchContent(freeToWatchUrls);
+
+                const recommendations = this.extractRecommendations(freeToWatchResponses);
+                allEpisodes = this.fetchEpisodesByIds(recommendations);
+            }
+
+            const platformVideos = [...allEpisodes, ...discoverBody.data]
+                .filter(e => !e.episode_metadata.is_dubbed)
+                .map(e => episodeToPlatformVideo(e));
+
+            const offset = this.context.offset + ITEMS_PER_PAGE;
+
+            return new HomeContentVideoPager({
+                context: { offset },
+                videos: platformVideos,
+                hasMore: offset < discoverBody.total,
+            });
+        }
+
+        extractFreeToWatchUrls(homeBody) {
+            const freeToWatch = homeBody?.children
+                .filter(i => (
+                    i.props.analyticsId.toLowerCase().includes("sampler") ||
+                    i.props.analyticsId.toLowerCase().includes("free")
+                ) && i.props.link)
+                .map(i => i.props.link) ?? [];
+
+            const freeToWatchFirstSeasonsUrl = homeBody?.children.find(
+                i => i.props.analyticsId === "Curation_Collections/Editorial/Free-to-Watch_First_Seasons"
+            )?.props?.link ?? '';
+
+            const newEpisodesSeasonalSamplerUrl = homeBody?.children.find(
+                i => i.props.analyticsId.includes("_Seasonal_Sampler")
+            )?.props?.link ?? '';
+
+            return new Set([...freeToWatch, freeToWatchFirstSeasonsUrl, newEpisodesSeasonalSamplerUrl]);
+        }
+
+        fetchFreeToWatchContent(urlSet) {
+            let freeToWatchBatchRequests = http.batch();
+
+            urlSet.forEach(url => {
+                freeToWatchBatchRequests.GET(`${BASE_URL}${url}`, local_state.headers, true);
+            });
+
+            return freeToWatchBatchRequests.execute();
+        }
+
+        extractRecommendations(freeToWatchResponses) {
+            let recommendationsSet = new Set();
+
+            freeToWatchResponses.forEach(response => {
+                if (!response.isOk) {
+                    throw new ScriptException("Failed to fetch free-to-watch content");
+                }
+
+                const freeToWatchBody = JSON.parse(response.body);
+                const freeToWatchEpisodes = freeToWatchBody?.recommendations.map(i => i.contentItemId) ?? [];
+
+                freeToWatchEpisodes.forEach(id => recommendationsSet.add(id));
+            });
+
+            return Array.from(recommendationsSet);
+        }
+
+        fetchEpisodesByIds(ids) {
+            if (!ids.length) return [];
+
+            const episodeResponse = http.GET(
+                `${BASE_URL}/content/v2/cms/objects/${ids.join(",")}?ratings=true`,
+                local_state.headers,
+                true
+            );
+
+            if (!episodeResponse.isOk) {
+                throw new ScriptException("Failed to fetch episode details");
+            }
+
+            return JSON.parse(episodeResponse.body)?.data ?? [];
+        }
     }
-    return new ContentPager(results, false);
+
+    return new HomeContentVideoPager().nextPage();
+
 }
+
 //#endregion
 //#region search
 function getSearchCapabilities() {
@@ -159,8 +285,8 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
     const durationInMs = episode?.episode_metadata?.duration_ms ?? 0;
 
     const premiumSuffix = isPremiumOnly && !userIsPremium ? ' (premium)' : '';
-    
-    const name = `S${episode.episode_metadata.season_number}E${episode.episode_metadata.episode_number} - ${episode.title} ${premiumSuffix}`;
+
+    const name = `S${episode.episode_metadata.season_number}E${episode.episode_metadata.episode_number} ${premiumSuffix} - ${episode.title}`;
 
     if (shouldShowContent) {
         return new PlatformVideo({
@@ -415,7 +541,7 @@ function getContentDetails(url) {
     const thumbnails = new Thumbnails(image.map((image) => new Thumbnail(image.source, image.height)));
     return new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
-        name: `S${episode.episode_metadata.season_number}E${episode.episode_metadata.episode_number} - ${metadata.title} `,
+        name: `S${metadata.episode_metadata.season_number}E${metadata.episode_metadata.episode_number} - ${metadata.title} `,
         thumbnails: thumbnails,
         author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
         datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
