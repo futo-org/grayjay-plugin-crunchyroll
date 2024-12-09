@@ -538,22 +538,26 @@ function getContentDetails(url) {
     if (metadata.episode_metadata.is_premium_only && bridge.isLoggedIn() === false) {
         throw new LoginRequiredException("Login with a premium account to watch");
     }
-    const thumbnails = new Thumbnails(image.map((image) => new Thumbnail(image.source, image.height)));
-    return new PlatformVideoDetails({
-        id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
-        name: `S${metadata.episode_metadata.season_number}E${metadata.episode_metadata.episode_number} - ${metadata.title} `,
-        thumbnails: thumbnails,
-        author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
-        datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
-        url,
-        duration: metadata.episode_metadata.duration_ms / 1000,
-        isLive: false,
-        shareUrl: url,
-        description: metadata.description,
-        video: new VideoSourceDescriptor([new DashWidevineSource({
-            name: "Dash",
-            duration: metadata.episode_metadata.duration_ms / 1000,
+
+    const sources = [
+        {
+            hlang: play_response.audioLocale,
             url: play_response.url,
+            priority: true
+        },
+        ...Object.values(play_response.hardSubs).map(r => {
+            r.isHardSub = true;
+            r.priority = false;
+            return r;
+        })
+    ].map(s => {
+
+        const name = s.isHardSub ? `Hard Sub - ${s.hlang}` : s.hlang;
+        return new DashWidevineSource({
+            priority: !!s.priority,
+            name: name,
+            duration: metadata.episode_metadata.duration_ms / 1000,
+            url: s.url,
             requestModifier: {
                 // headers for the manifest
                 headers: local_state.headers,
@@ -575,7 +579,23 @@ function getContentDetails(url) {
                     }
                 };
             }
-        })]),
+        });
+    });
+
+    const thumbnails = new Thumbnails(image.map((image) => new Thumbnail(image.source, image.height)));
+    return new PlatformVideoDetails({
+        id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
+        name: `S${metadata.episode_metadata.season_number}E${metadata.episode_metadata.episode_number} - ${metadata.title} `,
+        thumbnails: thumbnails,
+        author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
+        datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
+        url,
+        duration: metadata.episode_metadata.duration_ms / 1000,
+        isLive: false,
+        shareUrl: url,
+        description: metadata.description,
+        video: new VideoSourceDescriptor(sources),
+        // subtitles: [],
         // TODO subtitles will be import to get right considering the vast options available likely subtitles and closed captions
         subtitles: Object.values(play_response.subtitles).map(subtitleInfo => {
             return {
