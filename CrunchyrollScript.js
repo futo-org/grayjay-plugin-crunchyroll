@@ -17,7 +17,8 @@ let local_settings;
 /** State */
 let local_state = {
     headers: {},
-    channels: {}
+    channels: {},
+    isPremium: false,
 };
 let config = {};
 let UNAVAILABLE_OPTIONS = [];
@@ -91,6 +92,26 @@ function enable(conf, settings, saved_state) {
         local_state.headers = {
             Authorization: `Bearer ${get_bearer()}`
         };
+
+
+        if (bridge.isLoggedIn()) {
+
+            const userResponse = http.GET("https://www.crunchyroll.com/accounts/v1/me", local_state.headers, true);
+
+            if (userResponse.isOk) {
+                const { external_id } = JSON.parse(userResponse.body);
+
+                const userSubscriptionsResponse = http.GET(`https://www.crunchyroll.com/subs/v1/subscriptions/${external_id}/benefits`, local_state.headers, true);
+
+                if (userSubscriptionsResponse.isOk) {
+                    const userSubscriptions = JSON.parse(userSubscriptionsResponse.body);
+
+                    local_state.isPremium = userSubscriptions.items.some(b => b.benefit === 'cr_premium');
+                    local_state.concurrentStreams = userSubscriptions.items.find(b => b.benefit.startsWith('concurrent_streams'))?.benefit.split('.').pop();
+                }
+            }
+
+        }
     }
 }
 //#endregion
@@ -143,7 +164,7 @@ function getHome() {
             const discoverBody = JSON.parse(responses[0].body);
 
             let allEpisodes = [];
-            if (isFirstPage) {
+            if (isFirstPage && !local_state.isPremium) {
                 const homeResponse = responses[1];
                 if (!homeResponse.isOk) {
                     throw new ScriptException(`Failed to fetch home page. Status: ${homeResponse.status}`);
@@ -277,14 +298,13 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
     const isPremiumOnly = episode?.episode_metadata?.availability_status === 'premium_only';
     const isLoggedIn = bridge.isLoggedIn();
     const premiumContentUnavailableOption = UNAVAILABLE_OPTIONS[local_settings.premiumContentUnavailableIndex];
-    const userIsPremium = false; //TODO
-    const shouldShowContent = opts.isPlaylist || !isPremiumOnly || userIsPremium || premiumContentUnavailableOption === "As regular content";
+    const shouldShowContent = opts.isPlaylist || !isPremiumOnly || local_state.isPremium || premiumContentUnavailableOption === "As regular content";
 
     const author = new PlatformAuthorLink(new PlatformID(PLATFORM, episode?.episode_metadata?.series_id, plugin.config.id), (episode.episode_metadata.series_title), `${SERIES_URL_PREFIX}${(episode.episode_metadata.series_id)}/${(episode.episode_metadata.series_slug_title)}`);
     const datetime = new Date(episode.episode_metadata.upload_date).getTime() / 1000;
     const durationInMs = episode?.episode_metadata?.duration_ms ?? 0;
 
-    const premiumSuffix = isPremiumOnly && !userIsPremium ? ' (premium)' : '';
+    const premiumSuffix = isPremiumOnly && !local_state.isPremium ? ' (premium)' : '';
 
     const name = `S${episode.episode_metadata.season_number}E${episode.episode_metadata.episode_number} ${premiumSuffix} - ${episode.title}`;
 
