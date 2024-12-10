@@ -1,7 +1,7 @@
 //#region constants
 const PLATFORM = "Crunchyroll";
 const BASE_URL = "https://www.crunchyroll.com";
-const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]*?)\//;
+const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]+)(?:\/.*)?$/;
 const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/series\/([A-Z0-9]+)(?:\/|$)/;
 const SERIES_URL_PREFIX = "https://www.crunchyroll.com/series/";
 const REGEX_INTERNAL_PLAYLIST_URL = /^https:\/\/grayjay\.internal\/Crunchyroll\/playlist\/([A-Z0-9]+)(?:\?.*)?$/;
@@ -44,7 +44,6 @@ const local_source = {
 init_source(local_source);
 function init_source(local_source) {
     for (const method_key of Object.keys(local_source)) {
-        // @ts-expect-error assign to readonly constant source object
         source[method_key] = local_source[method_key];
     }
 }
@@ -579,6 +578,11 @@ function getContentDetails(url) {
     }
     const episode_response = JSON.parse(responses[0].body);
     const play_response = JSON.parse(responses[1].body);
+
+    if (!responses[1].isOk) {
+        throw new ScriptException(`Failed to fetch play response: ${play_response.error}`);
+    }
+
     const metadata = episode_response.data[0];
     if (metadata === undefined) {
         throw new ScriptException("missing episode metadata");
@@ -591,18 +595,31 @@ function getContentDetails(url) {
         throw new LoginRequiredException("Login with a premium account to watch");
     }
 
-    const sources = [
+    const hardSubs = play_response?.hardSubs;
+
+    let subsSources = [
         {
             hlang: play_response.audioLocale,
             url: play_response.url,
             priority: true
         },
-        ...Object.values(play_response.hardSubs).map(r => {
-            r.isHardSub = true;
-            r.priority = false;
-            return r;
-        })
-    ].map(s => {
+    ];
+
+    if (play_response?.hardSubs) {
+        subsSources = [
+            ...subsSources,
+            ...Object.values(hardSubs).map(hardSub => {
+                return {
+                    hlang: hardSub.hlang,
+                    url: hardSub.url,
+                    isHardSub: true,
+                    priority: false
+                }
+            })
+        ];
+    }
+
+    const sources = subsSources.map(s => {
 
         const name = s.isHardSub ? `Hard Sub - ${s.hlang}` : s.hlang;
         return new DashWidevineSource({
@@ -635,7 +652,7 @@ function getContentDetails(url) {
     });
 
     const thumbnails = new Thumbnails(image.map((image) => new Thumbnail(image.source, image.height)));
-    return new PlatformVideoDetails({
+    const result = new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
         name: `S${metadata.episode_metadata.season_number}E${metadata.episode_metadata.episode_number} - ${metadata.title} `,
         thumbnails: thumbnails,
@@ -647,9 +664,8 @@ function getContentDetails(url) {
         shareUrl: url,
         description: metadata.description,
         video: new VideoSourceDescriptor(sources),
-        // subtitles: [],
         // TODO subtitles will be import to get right considering the vast options available likely subtitles and closed captions
-        subtitles: Object.values(play_response.subtitles).map(subtitleInfo => {
+        subtitles: Object.values(play_response?.subtitles ?? {}).map(subtitleInfo => {
             return {
                 name: subtitleInfo.language,
                 url: subtitleInfo.url,
