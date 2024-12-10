@@ -651,6 +651,24 @@ function getContentDetails(url) {
         });
     });
 
+
+    const dubbedVersions = play_response.versions?.filter(v => !v.original && (!v.is_premium_only || local_state.isPremium));
+
+    if (dubbedVersions?.length) {
+        let alternateStreamsLabel = '<p>Alternate Streams dubs:</p>';
+
+        play_response.versions.forEach((version) => {
+            if (!version.original) {
+                const versionUrl = `${BASE_URL}/watch/${version.guid}`;
+                alternateStreamsLabel += `<p><a href="${versionUrl}">${PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES[version.audio_locale].langName} - ${version.audio_locale} dubbed Version</a></p>`;
+            }
+        });
+
+        metadata.description += alternateStreamsLabel;
+    }
+
+
+
     const thumbnails = new Thumbnails(image.map((image) => new Thumbnail(image.source, image.height)));
     const result = new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
