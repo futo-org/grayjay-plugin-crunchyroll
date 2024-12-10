@@ -36,6 +36,7 @@ const local_source = {
     getSearchCapabilities,
     isContentDetailsUrl,
     getContentDetails,
+    getContentRecommendations,
     isChannelUrl,
     isPlaylistUrl,
     getUserSubscriptions
@@ -473,8 +474,18 @@ function getChannelPlaylists(url) {
 
 }
 
-function getSeasonEpisodes(seasonId, opts = { isPlaylist: true }) {
-    const seasonEpisodes = http.GET(`https://www.crunchyroll.com/content/v2/cms/seasons/${seasonId}/episodes?locale=en-US`, local_state.headers, true);
+function getSeasonEpisodes(seasonId, opts = { isPlaylist: true, filterCb: null }) {
+
+    if (!opts.filterCb) {
+        opts.filterCb = () => true;
+    }
+
+    const queryString = objectToUrlEncodedString({
+        locale: "en-US",
+        preferred_audio_language: getPreferedAudioLanguage(),
+    });
+
+    const seasonEpisodes = http.GET(`https://www.crunchyroll.com/content/v2/cms/seasons/${seasonId}/episodes?${queryString}`, local_state.headers, true);
 
     if (!seasonEpisodes.isOk) {
         throw new ScriptException("Failed to fetch season episodes");
@@ -482,7 +493,9 @@ function getSeasonEpisodes(seasonId, opts = { isPlaylist: true }) {
 
     const episodes = JSON.parse(seasonEpisodes.body)?.data ?? [];
 
-    return episodes.map(e => episodeToPlatformVideo(e, opts));
+    return episodes
+    .filter(opts.filterCb)
+    .map(e => episodeToPlatformVideo(e, opts));
 }
 
 source.getPlaylist = function (url) {
@@ -527,6 +540,25 @@ source.getPlaylist = function (url) {
 //#region content
 function isContentDetailsUrl(url) {
     return CONTENT_DETAIL_REGEX.test(url);
+}
+
+function getContentRecommendations(url, nextEpisodeResponseInitialData) {
+    let nextEpisodeResponse;
+
+    if (!nextEpisodeResponseInitialData) {
+        return new ContentPager([], false);
+    }
+
+    nextEpisodeResponse = nextEpisodeResponseInitialData;
+
+    const nextEpisode = (JSON.parse(nextEpisodeResponse.body)?.data ?? []).map(episodeToPlatformVideo);
+
+
+    if (!nextEpisode?.length) {
+        return new ContentPager([], false);
+    }
+
+    return new ContentPager(nextEpisode, false);
 }
 // TODO one thing to figure out will be how to link to other dubbings. they are different content ids (urls)
 // i don't think grayjay current has good support for the kind of structure crunchyroll uses. i'm not sure what the best approach will be
@@ -634,9 +666,14 @@ function getContentDetails(url) {
         // TODO I'm not usre if total is the total interactions or the total upvotes
         // consider using the star rating instead of the like and dislike rating
         rating: new RatingLikes(metadata.rating.total),
-        // TODO add recommendations section (probably the "next episode" section)
-        getContentRecommendations: () => new ContentPager([], false)
     });
+    // TODO add recommendations section (probably the "next episode" section)
+    result.getContentRecommendations = function () {
+        const seasonVideos = getSeasonEpisodes(metadata.episode_metadata.season_id, { isPlaylist: false, filterCb: (e) => e.episode_number > metadata.episode_metadata.episode_number }) ?? [];
+        return new ContentPager(seasonVideos, false);
+    };
+
+    return result;
 }
 //#endregion
 //#region playlists
@@ -661,20 +698,6 @@ function getUserSubscriptions() {
 }
 //#endregion
 //#region utilities
-function assert_never(value) {
-    log(value);
-}
-function log_passthrough(value) {
-    log(value);
-    return value;
-}
-function assert_exhaustive(value, exception_message) {
-    log(["Crunchyroll log:", value]);
-    if (exception_message !== undefined) {
-        return new ScriptException(exception_message);
-    }
-    return;
-}
 function string_to_bytes(str) {
     const result = [];
     for (let i = 0; i < str.length; i++) {
@@ -720,14 +743,18 @@ function objectToUrlEncodedString(obj) {
     for (const key in obj) {
         if (obj.hasOwnProperty(key)) {
             const encodedKey = encodeURIComponent(key);
-            const encodedValue = encodeURIComponent(obj[key]);
-            encodedParams.push(`${encodedKey}=${encodedValue}`);
+            const value = obj[key];
+
+            if (value !== undefined && value !== null) {
+                const encodedValue = encodeURIComponent(value);
+                encodedParams.push(`${encodedKey}=${encodedValue}`);
+            }
+
         }
     }
 
     return encodedParams.join('&');
 }
-
 
 function assToVtt(assContent) {
 
