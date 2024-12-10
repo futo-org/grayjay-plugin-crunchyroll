@@ -36,6 +36,7 @@ const local_source = {
     getSearchCapabilities,
     isContentDetailsUrl,
     getContentDetails,
+    getContentChapters,
     getContentRecommendations,
     isChannelUrl,
     isPlaylistUrl,
@@ -559,6 +560,29 @@ function getContentRecommendations(url, nextEpisodeResponseInitialData) {
 
     return new ContentPager(nextEpisode, false);
 }
+
+function getContentChapters(url) {
+
+    const videoId = url.match(CONTENT_DETAIL_REGEX)?.[1];
+
+    const response = http.GET(`https://static.crunchyroll.com/skip-events/production/${videoId}.json`, {}, false);
+
+    if (!response.isOk) {
+        throw new ScriptException("Failed to fetch content chapters");
+    }
+
+    return Object.values(JSON.parse(response.body))
+        .filter(skipEvent => typeof skipEvent === 'object')
+        .map(skipEvent => {
+            return {
+                name: skipEvent.type,
+                timeStart: skipEvent.start,
+                timeEnd: skipEvent.end,
+                type: Type.Chapter.NORMAL,
+            }
+        });
+}
+
 // TODO one thing to figure out will be how to link to other dubbings. they are different content ids (urls)
 // i don't think grayjay current has good support for the kind of structure crunchyroll uses. i'm not sure what the best approach will be
 //
@@ -701,6 +725,11 @@ function getContentDetails(url) {
         // consider using the star rating instead of the like and dislike rating
         rating: new RatingLikes(metadata.rating.total),
     });
+
+    result.getContentChapters = function () {
+        return source.getContentChapters(url);
+    }
+
     // TODO add recommendations section (probably the "next episode" section)
     result.getContentRecommendations = function () {
         const seasonVideos = getSeasonEpisodes(metadata.episode_metadata.season_id, { isPlaylist: false, filterCb: (e) => e.episode_number > metadata.episode_metadata.episode_number }) ?? [];
