@@ -38,6 +38,7 @@ const local_source = {
     getChannelContents,
     getChannelPlaylists,
     search,
+    searchChannels,
     getSearchCapabilities,
     isContentDetailsUrl,
     getContentDetails,
@@ -312,86 +313,17 @@ function getSearchCapabilities() {
 function filterEpisodeByAudioLocale(episode) {
     return !getPreferedAudioLanguage() || episode.episode_metadata.audio_locale === !getPreferedAudioLanguage();
 }
+
 function search(query, type, order, filters) {
     log(query, order, filters, type);
-    const searchQuery = query.split(" ").join("+");
-
-    const queryString = objectToUrlEncodedString({
-        q: searchQuery,
-        type: "episode",
-        ratings: true,
-        locale: "en-US",
-        preferred_audio_language: getPreferedAudioLanguage(),
-    });
-
-    const url = `https://www.crunchyroll.com/content/v2/discover/search?${queryString}`;
-
-    const response = http.GET(url, local_state.headers, true);
-    const contentList = [];
-    if (response.isOk) {
-        const searchResults = JSON.parse(response.body)?.data ?? [];
-        searchResults.forEach((searchResult) => {
-            // handle other types in the future
-            if (searchResult.type === "episode") {
-                searchResult.items
-                    .filter(filterEpisodeByAudioLocale)
-                    .forEach((metadata) => {
-                        contentList.push(episodeToPlatformVideo(metadata));
-                    });
-            }
-        });
-    }
-    return new ContentPager(contentList, false);
+    type = 'episode';
+    return genericSearch(query, type, order, filters);
 }
 
-function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
-
-    if (!episode.episode_metadata) {
-        episode.episode_metadata = episode;
-    }
-
-    const t = episode?.images?.thumbnail?.[0]?.map((image) => new Thumbnail(image.source, image.height)) ?? [];
-    const thumbnails = new Thumbnails(t);
-    const url = `https://www.crunchyroll.com/watch/${episode.id}/${episode.slug_title}`;
-
-    const isPremiumOnly = episode?.episode_metadata?.availability_status === 'premium_only';
-    const isLoggedIn = bridge.isLoggedIn();
-    const premiumContentUnavailableOption = UNAVAILABLE_OPTIONS[local_settings.premiumContentUnavailableIndex];
-    const shouldShowContent = opts.isPlaylist || !isPremiumOnly || local_state.isPremium || premiumContentUnavailableOption === "As regular content";
-
-    const author = new PlatformAuthorLink(new PlatformID(PLATFORM, episode?.episode_metadata?.series_id, plugin.config.id), (episode.episode_metadata.series_title), `${SERIES_URL_PREFIX}${(episode.episode_metadata.series_id)}/${(episode.episode_metadata.series_slug_title)}`);
-    const datetime = new Date(episode.episode_metadata.upload_date).getTime() / 1000;
-    const durationInMs = episode?.episode_metadata?.duration_ms ?? 0;
-
-    const premiumSuffix = isPremiumOnly && !local_state.isPremium ? ' (premium)' : '';
-
-    const name = `S${episode.episode_metadata.season_number}E${episode.episode_metadata.episode_number} ${premiumSuffix} - ${episode.title}`;
-
-    if (shouldShowContent) {
-        return new PlatformVideo({
-            id: new PlatformID(PLATFORM, episode.id, plugin.config.id),
-            name,
-            thumbnails: thumbnails,
-            author,
-            datetime,
-            url,
-            duration: durationInMs ? durationInMs / 1000 : 0,
-            isLive: false,
-            shareUrl: url
-        });
-    }
-    else if (premiumContentUnavailableOption === "As locked Content") {
-        const lockDescription = isLoggedIn ? 'This content is only available to premium users' : 'Login with a premium account to watch';
-        const unlockUrl = isLoggedIn ? "https://www.crunchyroll.com/premium" : "";
-        return new PlatformLockedContent({
-            id: new PlatformID(PLATFORM, episode.id, plugin.config.id),
-            name,
-            author,
-            datetime,
-            lockDescription,
-            unlockUrl,
-        });
-    }
+function searchChannels(query, type, order, filters) {
+    log(query, order, filters, type);
+    type = 'series';
+    return genericSearch(query, type, order, filters);
 }
 
 function getChannel(url) {
@@ -831,6 +763,113 @@ function getUserSubscriptions() {
 }
 //#endregion
 //#region utilities
+function genericSearch(query, type, order, filters) {
+    log(query, order, filters, type);
+    const searchQuery = query.split(" ").join("+");
+
+    const queryString = objectToUrlEncodedString({
+        q: searchQuery,
+        type,
+        ratings: true,
+        locale: "en-US",
+        preferred_audio_language: getPreferedAudioLanguage(),
+    });
+
+    const url = `https://www.crunchyroll.com/content/v2/discover/search?${queryString}`;
+
+    const response = http.GET(url, local_state.headers, true);
+    const contentList = [];
+    if (response.isOk) {
+        const searchResults = JSON.parse(response.body)?.data ?? [];
+        searchResults.forEach((searchResult) => {
+            // handle other types in the future
+            if (searchResult.type === "episode") {
+                searchResult.items
+                    .filter(filterEpisodeByAudioLocale)
+                    .forEach((metadata) => {
+                        contentList.push(episodeToPlatformVideo(metadata));
+                    });
+            }
+
+            if (searchResult.type === "series") {
+                searchResult.items
+                    .filter(filterEpisodeByAudioLocale)
+                    .forEach((metadata) => {
+                        contentList.push(serieToPlatformChannel(metadata));
+                    });
+            }
+        });
+    }
+    return new ContentPager(contentList, false);
+}
+
+function serieToPlatformChannel(serie) {
+
+    const thumbnails = serie?.images?.poster_tall?.[0]?.map((image) => new Thumbnail(image.source, image.height)) ?? [];
+    const url = `${SERIES_URL_PREFIX}${serie.id}/${serie.slug_title}`;
+
+    return new PlatformChannel({
+        id: new PlatformID(PLATFORM, serie.id, plugin.config.id),
+        name: serie.title,
+        thumbnail: thumbnails[thumbnails.length - 1].url, //TODO: add setting to select thumbnail quality
+        banner: '',
+        subscribers: 0,
+        description: serie?.description ?? '',
+        url,
+        // links
+    });
+}
+
+function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
+
+    if (!episode.episode_metadata) {
+        episode.episode_metadata = episode;
+    }
+
+    const t = episode?.images?.thumbnail?.[0]?.map((image) => new Thumbnail(image.source, image.height)) ?? [];
+    const thumbnails = new Thumbnails(t);
+    const url = `https://www.crunchyroll.com/watch/${episode.id}/${episode.slug_title}`;
+
+    const isPremiumOnly = episode?.episode_metadata?.availability_status === 'premium_only';
+    const isLoggedIn = bridge.isLoggedIn();
+    const premiumContentUnavailableOption = UNAVAILABLE_OPTIONS[local_settings.premiumContentUnavailableIndex];
+    const shouldShowContent = opts.isPlaylist || !isPremiumOnly || local_state.isPremium || premiumContentUnavailableOption === "As regular content";
+
+    const author = new PlatformAuthorLink(new PlatformID(PLATFORM, episode?.episode_metadata?.series_id, plugin.config.id), (episode.episode_metadata.series_title), `${SERIES_URL_PREFIX}${(episode.episode_metadata.series_id)}/${(episode.episode_metadata.series_slug_title)}`);
+    const datetime = new Date(episode.episode_metadata.upload_date).getTime() / 1000;
+    const durationInMs = episode?.episode_metadata?.duration_ms ?? 0;
+
+    const premiumSuffix = isPremiumOnly && !local_state.isPremium ? ' (premium)' : '';
+
+    const name = `S${episode.episode_metadata.season_number}E${episode.episode_metadata.episode_number} ${premiumSuffix} - ${episode.title}`;
+
+    if (shouldShowContent) {
+        return new PlatformVideo({
+            id: new PlatformID(PLATFORM, episode.id, plugin.config.id),
+            name,
+            thumbnails: thumbnails,
+            author,
+            datetime,
+            url,
+            duration: durationInMs ? durationInMs / 1000 : 0,
+            isLive: false,
+            shareUrl: url
+        });
+    }
+    else if (premiumContentUnavailableOption === "As locked Content") {
+        const lockDescription = isLoggedIn ? 'This content is only available to premium users' : 'Login with a premium account to watch';
+        const unlockUrl = isLoggedIn ? "https://www.crunchyroll.com/premium" : "";
+        return new PlatformLockedContent({
+            id: new PlatformID(PLATFORM, episode.id, plugin.config.id),
+            name,
+            author,
+            datetime,
+            lockDescription,
+            unlockUrl,
+        });
+    }
+}
+
 function string_to_bytes(str) {
     const result = [];
     for (let i = 0; i < str.length; i++) {
