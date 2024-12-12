@@ -494,8 +494,8 @@ function getSeasonEpisodes(seasonId, opts = { isPlaylist: true, filterCb: null }
     const episodes = JSON.parse(seasonEpisodes.body)?.data ?? [];
 
     return episodes
-    .filter(opts.filterCb)
-    .map(e => episodeToPlatformVideo(e, opts));
+        .filter(opts.filterCb)
+        .map(e => episodeToPlatformVideo(e, opts));
 }
 
 source.getPlaylist = function (url) {
@@ -668,6 +668,13 @@ function getContentDetails(url) {
                             "X-Cr-Video-Token": play_response.token,
                             "Content-Type": "application/octet-stream"
                         }, false).body;
+
+                        const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${video_id}/${play_response.token}`, local_state.headers, false);
+
+                        if (!deleteActiveStream.isOk) {
+                            bridge.toast(`Failed to delete active stream: ${deleteActiveStream.error}`);
+                        }
+
                         return utility.fromBase64(response);
                     }
                 };
