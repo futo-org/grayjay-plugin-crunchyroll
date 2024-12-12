@@ -13,7 +13,10 @@ Type.Order.Views = "Most played";
 Type.Order.Favorites = "Most favorited";
 Type.Feed.Playlists = "PLAYLISTS";
 Type.Feed.Albums = "ALBUMS";
-let local_settings;
+let local_settings = {
+    premiumContentUnavailableIndex: 0,
+    preferedAudioLanguageOptionIndex: 0
+};
 /** State */
 let local_state = {
     headers: {},
@@ -22,6 +25,8 @@ let local_state = {
 };
 let config = {};
 let UNAVAILABLE_OPTIONS = [];
+let PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES = {};
+let PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS = [];
 //#endregion
 //#region source methods
 const local_source = {
@@ -54,8 +59,20 @@ function enable(conf, settings, saved_state) {
     config = conf;
     local_settings = settings;
     UNAVAILABLE_OPTIONS = loadOptionsForSetting("premiumContentUnavailableIndex");
+
+    PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES = loadOptionsForSetting("preferedAudioLanguageOptionIndex")
+        .filter(option => option !== "Original")
+        .reduce((acc, option) => {
+            const [langCode, langName] = option.split(" - ");
+            acc[langCode] = { langCode, langName };
+            return acc;
+        }, {});
+
+    PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS = Object.keys(PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES);
+
     if (IS_TESTING) {
         local_settings.premiumContentUnavailableIndex = 0; // As locked content
+        local_settings.preferedAudioLanguageOptionIndex = 0; // Original
     }
     log(local_settings);
     if (saved_state) {
@@ -123,6 +140,12 @@ function saveState() {
     return JSON.stringify(local_state);
 }
 //#region home
+
+function getPreferedAudioLanguage() {
+    // -1 Subtraction is done to account for the "Original" option and ignore it
+    return local_settings.preferedAudioLanguageOptionIndex ? PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferedAudioLanguageOptionIndex - 1] : undefined;
+}
+
 function getHome() {
     class HomeContentVideoPager extends VideoPager {
         constructor(
@@ -142,6 +165,7 @@ function getHome() {
 
             const query = objectToUrlEncodedString({
                 type: "episode",
+                preferred_audio_language: getPreferedAudioLanguage(),
                 n: ITEMS_PER_PAGE,
                 start,
                 locale,
@@ -180,7 +204,7 @@ function getHome() {
             }
 
             const platformVideos = [...allEpisodes, ...discoverBody.data]
-                .filter(e => !e.episode_metadata.is_dubbed)
+                .filter(filterEpisodeByAudioLocale)
                 .map(e => episodeToPlatformVideo(e));
 
             const offset = this.context.offset + ITEMS_PER_PAGE;
@@ -266,10 +290,24 @@ function getSearchCapabilities() {
         Type.Feed.Videos
     ], [], []);
 }
+
+function filterEpisodeByAudioLocale(episode) {
+    return !getPreferedAudioLanguage() || episode.episode_metadata.audio_locale === !getPreferedAudioLanguage();
+}
 function search(query, type, order, filters) {
     log(query, order, filters, type);
     const searchQuery = query.split(" ").join("+");
-    const url = `https://www.crunchyroll.com/content/v2/discover/search?q=${searchQuery}&n=100&type=episode&ratings=true&locale=en-US`;
+
+    const queryString = objectToUrlEncodedString({
+        q: searchQuery,
+        type: "episode",
+        ratings: true,
+        locale: "en-US",
+        preferred_audio_language: getPreferedAudioLanguage(),
+    });
+
+    const url = `https://www.crunchyroll.com/content/v2/discover/search?${queryString}`;
+
     const response = http.GET(url, local_state.headers, true);
     const contentList = [];
     if (response.isOk) {
@@ -277,9 +315,11 @@ function search(query, type, order, filters) {
         searchResults.forEach((searchResult) => {
             // handle other types in the future
             if (searchResult.type === "episode") {
-                searchResult.items.forEach((metadata) => {
-                    contentList.push(episodeToPlatformVideo(metadata));
-                });
+                searchResult.items
+                    .filter(filterEpisodeByAudioLocale)
+                    .forEach((metadata) => {
+                        contentList.push(episodeToPlatformVideo(metadata));
+                    });
             }
         });
     }
@@ -370,8 +410,13 @@ function getChannelContents(url) {
         throw new ScriptException("Invalid channel URL");
     }
 
+    const queryString = objectToUrlEncodedString({
+        locale: "en-US",
+        preferred_audio_language: getPreferedAudioLanguage(),
+    });
+
     const seasonsResponse = http
-        .GET(`https://www.crunchyroll.com/content/v2/cms/series/${seriesId}/seasons?force_locale=&locale=en-US`, local_state.headers, true);
+        .GET(`https://www.crunchyroll.com/content/v2/cms/series/${seriesId}/seasons?${queryString}`, local_state.headers, true);
 
     if (!seasonsResponse.isOk) {
         throw new ScriptException("Failed to fetch serie season");
@@ -494,8 +539,8 @@ function getSeasonEpisodes(seasonId, opts = { isPlaylist: true, filterCb: null }
     const episodes = JSON.parse(seasonEpisodes.body)?.data ?? [];
 
     return episodes
-    .filter(opts.filterCb)
-    .map(e => episodeToPlatformVideo(e, opts));
+        .filter(opts.filterCb)
+        .map(e => episodeToPlatformVideo(e, opts));
 }
 
 source.getPlaylist = function (url) {
