@@ -75,10 +75,16 @@ function enable(conf, settings, saved_state) {
         local_settings.preferedAudioLanguageOptionIndex = 0; // Original
     }
     log(local_settings);
+
+    let validAuthSession = false;
+
     if (saved_state) {
         local_state = JSON.parse(saved_state);
+        validAuthSession = local_state.access_token_expires_at > Date.now();
     }
-    else {
+
+
+    if (!validAuthSession) {
         const html = http.GET("https://www.crunchyroll.com/", {}, true).body;
         const match_result = html.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
         if (match_result === null || match_result[1] === undefined) {
@@ -91,24 +97,36 @@ function enable(conf, settings, saved_state) {
         // here is an example for Spotify if that's helpful
         // https://gitlab.futo.org/videostreaming/plugins/spotify/-/blob/master/src/SpotifyScript.ts?ref_type=heads#L255
         function get_bearer() {
+
+            let response;
+
             if (bridge.isLoggedIn()) {
-                const response = JSON.parse(http.POST(token_url, "grant_type=etp_rt_cookie", {
+                response = JSON.parse(http.POST(token_url, "grant_type=etp_rt_cookie", {
                     Authorization: `Basic ${auth}`,
                     "Content-Type": "application/x-www-form-urlencoded",
                 }, true).body);
-                return response.access_token;
+
             }
             else {
-                const response = JSON.parse(http.POST(token_url, "grant_type=client_id", {
+                response = JSON.parse(http.POST(token_url, "grant_type=client_id", {
                     Authorization: `Basic ${auth}`,
                     "Content-Type": "application/x-www-form-urlencoded",
                     "Etp-Anonymous-Id": "6ba29c34-469b-4597-9d0d-9bbc672fb2d7"
                 }, false).body);
-                return response.access_token;
+
             }
+
+            return {
+                access_token: response.access_token,
+                access_token_expires_at: Date.now() + response.expires_in * 1000
+            };
         }
+
+        const { access_token, access_token_expires_at } = get_bearer();
+
+        local_state.access_token_expires_at = access_token_expires_at;
         local_state.headers = {
-            Authorization: `Bearer ${get_bearer()}`
+            Authorization: `Bearer ${access_token}`,
         };
 
 
@@ -713,6 +731,13 @@ function getContentDetails(url) {
                             "X-Cr-Video-Token": play_response.token,
                             "Content-Type": "application/octet-stream"
                         }, false).body;
+
+                        const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${video_id}/${play_response.token}`, local_state.headers, false);
+
+                        if (!deleteActiveStream.isOk) {
+                            bridge.toast(`Failed to delete active stream: ${deleteActiveStream.error}`);
+                        }
+
                         return utility.fromBase64(response);
                     }
                 };
