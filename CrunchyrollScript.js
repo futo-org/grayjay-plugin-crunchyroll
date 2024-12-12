@@ -677,7 +677,6 @@ function getContentDetails(url) {
         });
     });
 
-
     const dubbedVersions = play_response.versions?.filter(v => !v.original && (!v.is_premium_only || local_state.isPremium));
 
     if (dubbedVersions?.length) {
@@ -693,7 +692,7 @@ function getContentDetails(url) {
         metadata.description += alternateStreamsLabel;
     }
 
-
+    const { likes, dislikes } = parseLikesAndDislikes(metadata.rating);
 
     const thumbnails = new Thumbnails(image.map((image) => new Thumbnail(image.source, image.height)));
     const result = new PlatformVideoDetails({
@@ -725,7 +724,7 @@ function getContentDetails(url) {
         }),
         // TODO I'm not usre if total is the total interactions or the total upvotes
         // consider using the star rating instead of the like and dislike rating
-        rating: new RatingLikes(metadata.rating.total),
+        rating: new RatingLikesDislikes(likes, dislikes),
     });
 
     result.getContentChapters = function () {
@@ -926,6 +925,36 @@ function objectToUrlEncodedString(obj) {
     }
 
     return encodedParams.join('&');
+}
+
+function parseLikesAndDislikes(data) {
+    // Helper function to convert displayed values with units to actual numbers
+    function convertToNumber(displayed, unit) {
+        let value = parseFloat(displayed); // Parse the number part
+        switch (unit.toUpperCase()) { // Handle different unit cases
+            case 'K':
+                value *= 1000;
+                break;
+            case 'M':
+                value *= 1000000;
+                break;
+            case 'B':
+                value *= 1000000000;
+                break;
+            // No unit or unrecognized unit: assume value is already in base form
+        }
+        return value;
+    }
+
+    // Convert up (likes) and down (dislikes) using the helper
+    const likes = convertToNumber(data.up.displayed, data.up.unit);
+    const dislikes = convertToNumber(data.down.displayed, data.down.unit);
+
+    // Return the processed object
+    return {
+        likes: likes,
+        dislikes: dislikes
+    };
 }
 
 function assToVtt(assContent) {
