@@ -75,7 +75,6 @@ function enable(conf, settings, saved_state) {
         local_settings.premiumContentUnavailableIndex = 0; // As locked content
         local_settings.preferedAudioLanguageOptionIndex = 0; // Original
     }
-    log(local_settings);
 
     if (saved_state) {
         local_state = JSON.parse(saved_state);
@@ -148,7 +147,6 @@ function getHome() {
             }
 
             const platformVideos = [...allEpisodes, ...discoverBody.data]
-                .filter(filterEpisodeByAudioLocale)
                 .map(e => episodeToPlatformVideo(e));
 
             const offset = this.context.offset + ITEMS_PER_PAGE;
@@ -233,10 +231,6 @@ function getSearchCapabilities() {
     return new ResultCapabilities([
         Type.Feed.Videos
     ], [], []);
-}
-
-function filterEpisodeByAudioLocale(episode) {
-    return !getPreferedAudioLanguage() || episode.episode_metadata.audio_locale === !getPreferedAudioLanguage();
 }
 
 function search(query, type, order, filters) {
@@ -523,9 +517,6 @@ function getContentDetails(url) {
     const episode_response = JSON.parse(responses[0].body);
     const play_response = JSON.parse(responses[1].body);
 
-    if (!responses[1].isOk) {
-        throw new ScriptException(`Failed to fetch play response: ${play_response.error}`);
-    }
 
     const metadata = episode_response.data[0];
     if (metadata === undefined) {
@@ -537,6 +528,9 @@ function getContentDetails(url) {
     }
     if (metadata.episode_metadata.is_premium_only && bridge.isLoggedIn() === false) {
         throw new LoginRequiredException("Login with a premium account to watch");
+    }
+    if (!responses[1].isOk) {
+        throw new ScriptException(`Failed to fetch play response: ${play_response.error}`);
     }
 
     const hardSubs = play_response?.hardSubs;
@@ -709,7 +703,6 @@ function genericSearch(query, type, order, filters) {
             // handle other types in the future
             if (searchResult.type === "episode") {
                 searchResult.items
-                    .filter(filterEpisodeByAudioLocale)
                     .forEach((metadata) => {
                         contentList.push(episodeToPlatformVideo(metadata));
                     });
@@ -717,7 +710,6 @@ function genericSearch(query, type, order, filters) {
 
             if (searchResult.type === "series") {
                 searchResult.items
-                    .filter(filterEpisodeByAudioLocale)
                     .forEach((metadata) => {
                         contentList.push(serieToPlatformChannel(metadata));
                     });
@@ -763,9 +755,19 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
     const datetime = new Date(episode.episode_metadata.upload_date).getTime() / 1000;
     const durationInMs = episode?.episode_metadata?.duration_ms ?? 0;
 
+    debugger;
+
     const premiumSuffix = isPremiumOnly && !local_state.isPremium ? ' (premium)' : '';
 
-    const name = `S${episode.episode_metadata.season_number}E${episode.episode_metadata.episode_number} ${premiumSuffix} - ${episode.title}`;
+    const nameParts = [
+        `S${episode.episode_metadata.season_number}` +
+        (episode.episode_metadata.episode_number ? `E${episode.episode_metadata.episode_number}` : ''),
+        `[${episode?.episode_metadata?.audio_locale?.toUpperCase() ?? ''}]`,
+        premiumSuffix,
+        episode.title
+    ].filter(Boolean);
+
+    const name = nameParts.join(' ');
 
     if (shouldShowContent) {
         return new PlatformVideo({
