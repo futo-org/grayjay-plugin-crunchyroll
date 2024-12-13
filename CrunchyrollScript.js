@@ -77,28 +77,8 @@ function enable(conf, settings, saved_state) {
     }
     log(local_settings);
 
-
     if (saved_state) {
         local_state = JSON.parse(saved_state);
-    }
-
-    if (bridge.isLoggedIn()) {
-
-        const userResponse = http.GET("https://www.crunchyroll.com/accounts/v1/me", getHeaders(), true);
-
-        if (userResponse.isOk) {
-            const { external_id } = JSON.parse(userResponse.body);
-
-            const userSubscriptionsResponse = http.GET(`https://www.crunchyroll.com/subs/v1/subscriptions/${external_id}/benefits`, getHeaders(), true);
-
-            if (userSubscriptionsResponse.isOk) {
-                const userSubscriptions = JSON.parse(userSubscriptionsResponse.body);
-
-                local_state.isPremium = userSubscriptions.items.some(b => b.benefit === 'cr_premium');
-                local_state.concurrentStreams = userSubscriptions.items.find(b => b.benefit.startsWith('concurrent_streams'))?.benefit.split('.').pop();
-            }
-        }
-
     }
 }
 //#endregion
@@ -979,6 +959,14 @@ function renewSession() {
     local_state.headers = {
         Authorization: `Bearer ${access_token}`,
     };
+
+    if (bridge.isLoggedIn()) {
+
+        const { payload } = decodeJWT(access_token);
+
+        local_state.isPremium = payload.benefits.some(benefit => benefit === 'cr_premium');
+        local_state.concurrentStreams = payload.benefits.find(benefit => benefit.startsWith('concurrent_streams'))?.split('.').pop();
+    }
 }
 
 function getHeaders() {
@@ -994,6 +982,45 @@ function getHeaders() {
 function getPreferedAudioLanguage() {
     // -1 Subtraction is done to account for the "Original" option and ignore it
     return local_settings.preferedAudioLanguageOptionIndex ? PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferedAudioLanguageOptionIndex - 1] : undefined;
+}
+
+function decodeJWT(token) {
+    // Validate token format
+    if (!token || typeof token !== 'string') {
+        throw new ScriptException('Invalid token: Must be a non-empty string');
+    }
+
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+        throw new ScriptException('Invalid JWT: Must have exactly 3 parts');
+    }
+
+    const base64UrlToBase64 = (base64Url) => {
+        return base64Url
+            .replace(/-/g, '+')
+            .replace(/_/g, '/') +
+            '='.repeat((4 - (base64Url.length % 4)) % 4);
+    };
+
+    const decodeBase64 = (base64) => {
+        try {
+            return JSON.parse(atob(base64));
+        } catch (error) {
+            throw new ScriptException('Failed to decode Base64: Invalid format');
+        }
+    };
+
+    try {
+        const [header, payload, signature] = parts;
+
+        return {
+            header: decodeBase64(base64UrlToBase64(header)),
+            payload: decodeBase64(base64UrlToBase64(payload)),
+            signature: signature
+        };
+    } catch (error) {
+        throw new ScriptException(`JWT Decoding Error: ${error.message}`);
+    }
 }
 
 
