@@ -77,78 +77,28 @@ function enable(conf, settings, saved_state) {
     }
     log(local_settings);
 
-    let validAuthSession = false;
 
     if (saved_state) {
         local_state = JSON.parse(saved_state);
-        validAuthSession = local_state.access_token_expires_at > Date.now();
     }
 
+    if (bridge.isLoggedIn()) {
 
-    if (!validAuthSession) {
-        const html = http.GET("https://www.crunchyroll.com/", {}, true).body;
-        const match_result = html.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
-        if (match_result === null || match_result[1] === undefined) {
-            throw new ScriptException("regex error");
-        }
-        const accountAuthClientId = match_result[1];
-        const auth = utility.toBase64(string_to_bytes(`${accountAuthClientId}:`));
-        const token_url = "https://www.crunchyroll.com/auth/v1/token";
-        // TODO the bearer token likely needs to be refreshed after some amount of time
-        // here is an example for Spotify if that's helpful
-        // https://gitlab.futo.org/videostreaming/plugins/spotify/-/blob/master/src/SpotifyScript.ts?ref_type=heads#L255
-        function get_bearer() {
+        const userResponse = http.GET("https://www.crunchyroll.com/accounts/v1/me", getHeaders(), true);
 
-            let response;
+        if (userResponse.isOk) {
+            const { external_id } = JSON.parse(userResponse.body);
 
-            if (bridge.isLoggedIn()) {
-                response = JSON.parse(http.POST(token_url, "grant_type=etp_rt_cookie", {
-                    Authorization: `Basic ${auth}`,
-                    "Content-Type": "application/x-www-form-urlencoded",
-                }, true).body);
+            const userSubscriptionsResponse = http.GET(`https://www.crunchyroll.com/subs/v1/subscriptions/${external_id}/benefits`, getHeaders(), true);
 
+            if (userSubscriptionsResponse.isOk) {
+                const userSubscriptions = JSON.parse(userSubscriptionsResponse.body);
+
+                local_state.isPremium = userSubscriptions.items.some(b => b.benefit === 'cr_premium');
+                local_state.concurrentStreams = userSubscriptions.items.find(b => b.benefit.startsWith('concurrent_streams'))?.benefit.split('.').pop();
             }
-            else {
-                response = JSON.parse(http.POST(token_url, "grant_type=client_id", {
-                    Authorization: `Basic ${auth}`,
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Etp-Anonymous-Id": "6ba29c34-469b-4597-9d0d-9bbc672fb2d7"
-                }, false).body);
-
-            }
-
-            return {
-                access_token: response.access_token,
-                access_token_expires_at: Date.now() + response.expires_in * 1000
-            };
         }
 
-        const { access_token, access_token_expires_at } = get_bearer();
-
-        local_state.access_token_expires_at = access_token_expires_at;
-        local_state.headers = {
-            Authorization: `Bearer ${access_token}`,
-        };
-
-
-        if (bridge.isLoggedIn()) {
-
-            const userResponse = http.GET("https://www.crunchyroll.com/accounts/v1/me", local_state.headers, true);
-
-            if (userResponse.isOk) {
-                const { external_id } = JSON.parse(userResponse.body);
-
-                const userSubscriptionsResponse = http.GET(`https://www.crunchyroll.com/subs/v1/subscriptions/${external_id}/benefits`, local_state.headers, true);
-
-                if (userSubscriptionsResponse.isOk) {
-                    const userSubscriptions = JSON.parse(userSubscriptionsResponse.body);
-
-                    local_state.isPremium = userSubscriptions.items.some(b => b.benefit === 'cr_premium');
-                    local_state.concurrentStreams = userSubscriptions.items.find(b => b.benefit.startsWith('concurrent_streams'))?.benefit.split('.').pop();
-                }
-            }
-
-        }
     }
 }
 //#endregion
@@ -159,11 +109,6 @@ function saveState() {
     return JSON.stringify(local_state);
 }
 //#region home
-
-function getPreferedAudioLanguage() {
-    // -1 Subtraction is done to account for the "Original" option and ignore it
-    return local_settings.preferedAudioLanguageOptionIndex ? PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferedAudioLanguageOptionIndex - 1] : undefined;
-}
 
 function getHome() {
     class HomeContentVideoPager extends VideoPager {
@@ -193,10 +138,10 @@ function getHome() {
             });
 
             let batchRequests = http.batch();
-            batchRequests.GET(`${BASE_URL}/content/v2/discover/browse?${query}`, local_state.headers);
+            batchRequests.GET(`${BASE_URL}/content/v2/discover/browse?${query}`, getHeaders());
 
             if (isFirstPage) {
-                batchRequests.GET(`${BASE_URL}/f/v1/home?locale=${locale}`, local_state.headers, true);
+                batchRequests.GET(`${BASE_URL}/f/v1/home?locale=${locale}`, getHeaders(), true);
             }
 
             const responses = batchRequests.execute();
@@ -258,7 +203,7 @@ function getHome() {
             let freeToWatchBatchRequests = http.batch();
 
             urlSet.forEach(url => {
-                freeToWatchBatchRequests.GET(`${BASE_URL}${url}`, local_state.headers, true);
+                freeToWatchBatchRequests.GET(`${BASE_URL}${url}`, getHeaders(), true);
             });
 
             return freeToWatchBatchRequests.execute();
@@ -286,7 +231,7 @@ function getHome() {
 
             const episodeResponse = http.GET(
                 `${BASE_URL}/content/v2/cms/objects/${ids.join(",")}?ratings=true`,
-                local_state.headers,
+                getHeaders(),
                 true
             );
 
@@ -366,7 +311,7 @@ function getChannelContents(url) {
     });
 
     const seasonsResponse = http
-        .GET(`https://www.crunchyroll.com/content/v2/cms/series/${seriesId}/seasons?${queryString}`, local_state.headers, true);
+        .GET(`https://www.crunchyroll.com/content/v2/cms/series/${seriesId}/seasons?${queryString}`, getHeaders(), true);
 
     if (!seasonsResponse.isOk) {
         throw new ScriptException("Failed to fetch serie season");
@@ -414,8 +359,8 @@ function getChannelPlaylists(url) {
 
     const [serieInfoResponse, seasonsResponse] = http
         .batch()
-        .GET(`https://www.crunchyroll.com/content/v2/cms/objects/${seriesId}?ratings=true`, local_state.headers, false)
-        .GET(`https://www.crunchyroll.com/content/v2/cms/series/${seriesId}/seasons?force_locale=&locale=en-US`, local_state.headers, true)
+        .GET(`https://www.crunchyroll.com/content/v2/cms/objects/${seriesId}?ratings=true`, getHeaders(), false)
+        .GET(`https://www.crunchyroll.com/content/v2/cms/series/${seriesId}/seasons?force_locale=&locale=en-US`, getHeaders(), true)
         .execute();
 
     if (!serieInfoResponse.isOk) {
@@ -480,7 +425,7 @@ function getSeasonEpisodes(seasonId, opts = { isPlaylist: true, filterCb: null }
         preferred_audio_language: getPreferedAudioLanguage(),
     });
 
-    const seasonEpisodes = http.GET(`https://www.crunchyroll.com/content/v2/cms/seasons/${seasonId}/episodes?${queryString}`, local_state.headers, true);
+    const seasonEpisodes = http.GET(`https://www.crunchyroll.com/content/v2/cms/seasons/${seasonId}/episodes?${queryString}`, getHeaders(), true);
 
     if (!seasonEpisodes.isOk) {
         throw new ScriptException("Failed to fetch season episodes");
@@ -589,8 +534,8 @@ function getContentDetails(url) {
     }
     const responses = http
         .batch()
-        .GET(`https://www.crunchyroll.com/content/v2/cms/objects/${video_id}?ratings=true`, local_state.headers, false)
-        .GET(`https://cr-play-service.prd.crunchyrollsvc.com/v1/${video_id}/web/firefox/play`, local_state.headers, false)
+        .GET(`https://www.crunchyroll.com/content/v2/cms/objects/${video_id}?ratings=true`, getHeaders(), false)
+        .GET(`https://cr-play-service.prd.crunchyrollsvc.com/v1/${video_id}/web/firefox/play`, getHeaders(), false)
         .execute();
     if (responses[0] === undefined || responses[1] === undefined) {
         throw new ScriptException("unreachable");
@@ -648,7 +593,7 @@ function getContentDetails(url) {
             url: s.url,
             requestModifier: {
                 // headers for the manifest
-                headers: local_state.headers,
+                headers: getHeaders(),
             },
             licenseUri: "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine?specConform=true",
             getLicenseRequestExecutor: () => {
@@ -658,13 +603,13 @@ function getContentDetails(url) {
                             throw new ScriptException("missing license request data");
                         }
                         const response = http.POST(url, license_request_data, {
-                            ...local_state.headers,
+                            ...getHeaders(),
                             "X-Cr-Content-Id": video_id,
                             "X-Cr-Video-Token": play_response.token,
                             "Content-Type": "application/octet-stream"
                         }, false).body;
 
-                        const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${video_id}/${play_response.token}`, local_state.headers, false);
+                        const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${video_id}/${play_response.token}`, getHeaders(), false);
 
                         if (!deleteActiveStream.isOk) {
                             bridge.toast(`Failed to delete active stream: ${deleteActiveStream.error}`);
@@ -776,7 +721,7 @@ function genericSearch(query, type, order, filters) {
 
     const url = `https://www.crunchyroll.com/content/v2/discover/search?${queryString}`;
 
-    const response = http.GET(url, local_state.headers, true);
+    const response = http.GET(url, getHeaders(), true);
     const contentList = [];
     if (response.isOk) {
         const searchResults = JSON.parse(response.body)?.data ?? [];
@@ -891,7 +836,7 @@ function extractSeriesId(url) {
     return match ? match[1] : null;
 }
 function getObjectMetadata(id, options = { first: false }) {
-    const response = http.GET(`https://www.crunchyroll.com/content/v2/cms/objects/${id}?ratings=true`, local_state.headers, false);
+    const response = http.GET(`https://www.crunchyroll.com/content/v2/cms/objects/${id}?ratings=true`, getHeaders(), false);
     if (!response.isOk) {
         throw new ScriptException(`Failed to fetch metadata for content with ID ${id}`);
     }
@@ -987,6 +932,68 @@ function assToVtt(assContent) {
         })
 
     return vttLines.join('\n');
+}
+
+function get_bearer() {
+
+    const html = http.GET("https://www.crunchyroll.com/", {}, true).body;
+    const match_result = html.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
+    if (match_result === null || match_result[1] === undefined) {
+        throw new ScriptException("regex error");
+    }
+    const accountAuthClientId = match_result[1];
+    const auth = utility.toBase64(string_to_bytes(`${accountAuthClientId}:`));
+    const token_url = "https://www.crunchyroll.com/auth/v1/token";
+    // TODO the bearer token likely needs to be refreshed after some amount of time
+    // here is an example for Spotify if that's helpful
+    // https://gitlab.futo.org/videostreaming/plugins/spotify/-/blob/master/src/SpotifyScript.ts?ref_type=heads#L255
+
+    let response;
+
+    if (bridge.isLoggedIn()) {
+        response = JSON.parse(http.POST(token_url, "grant_type=etp_rt_cookie", {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+        }, true).body);
+        // 5 minutes before the token expires
+    }
+    else {
+        response = JSON.parse(http.POST(token_url, "grant_type=client_id", {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Etp-Anonymous-Id": "6ba29c34-469b-4597-9d0d-9bbc672fb2d7"
+        }, false).body);
+        // 1h before the token expires
+    }
+
+    return {
+        access_token: response.access_token,
+        access_token_expires_at: Date.now() + response.expires_in * 1000
+    };
+}
+
+function renewSession() {
+    const { access_token, access_token_expires_at } = get_bearer();
+
+    local_state.access_token_expires_at = access_token_expires_at;
+    local_state.headers = {
+        Authorization: `Bearer ${access_token}`,
+    };
+}
+
+function getHeaders() {
+
+    const validAuthSession = local_state.access_token_expires_at > Date.now();
+
+    if (!validAuthSession) {
+        renewSession();
+    }
+
+    return local_state.headers;
+}
+function getPreferedAudioLanguage() {
+    // -1 Subtraction is done to account for the "Original" option and ignore it
+    return local_settings.preferedAudioLanguageOptionIndex ? PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferedAudioLanguageOptionIndex - 1] : undefined;
 }
 
 
