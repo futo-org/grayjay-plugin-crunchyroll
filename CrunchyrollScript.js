@@ -522,10 +522,7 @@ function getContentDetails(url) {
     if (metadata === undefined) {
         throw new ScriptException("missing episode metadata");
     }
-    const image = metadata.images.thumbnail[0];
-    if (image === undefined) {
-        throw new ScriptException("missing episode thumbnail");
-    }
+
     if (metadata.episode_metadata.is_premium_only && bridge.isLoggedIn() === false) {
         throw new LoginRequiredException("Login with a premium account to watch");
     }
@@ -612,8 +609,9 @@ function getContentDetails(url) {
     }
 
     const { likes, dislikes } = parseLikesAndDislikes(metadata.rating);
+    const images = metadata?.images?.thumbnail?.[0] ?? [];
 
-    const thumbnails = new Thumbnails(image.map((image) => new Thumbnail(image.source, image.height)));
+    const thumbnails = new Thumbnails(images.map((image) => new Thumbnail(image.source, image.height)));
     const result = new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
         name: `S${metadata.episode_metadata.season_number}E${metadata.episode_metadata.episode_number} - ${metadata.title} `,
@@ -755,7 +753,6 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
     const datetime = new Date(episode.episode_metadata.upload_date).getTime() / 1000;
     const durationInMs = episode?.episode_metadata?.duration_ms ?? 0;
 
-    debugger;
 
     const premiumSuffix = isPremiumOnly && !local_state.isPremium ? ' (premium)' : '';
 
