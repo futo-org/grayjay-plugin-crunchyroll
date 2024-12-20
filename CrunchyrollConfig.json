@@ -1,5 +1,5 @@
 {
-    "name": "Crunchyroll",
+    "name": "Crunchyroll (Alpha)",
     "description": "Watch the latest anime on Crunchyroll",
     "author": "FUTO",
     "authorUrl": "https://futo.org",
@@ -18,8 +18,7 @@
     ],
     "allowEval": false,
     "allowUrls": [
-        "www.crunchyroll.com",
-        "static.crunchyroll.com",
+        ".crunchyroll.com",
         "cr-play-service.prd.crunchyrollsvc.com",
         "cr-license-proxy.prd.crunchyrollsvc.com",
         "v.vrv.co"

@@ -147,7 +147,8 @@ function getHome() {
             }
 
             const platformVideos = [...allEpisodes, ...discoverBody.data]
-                .map(e => episodeToPlatformVideo(e));
+                .map(e => episodeToPlatformVideo(e))
+                .filter(e => e);
 
             const offset = this.context.offset + ITEMS_PER_PAGE;
 
@@ -409,7 +410,8 @@ function getSeasonEpisodes(seasonId, opts = { isPlaylist: true, filterCb: null }
 
     return episodes
         .filter(opts.filterCb)
-        .map(e => episodeToPlatformVideo(e, opts));
+        .map(e => episodeToPlatformVideo(e, opts))
+        .filter(e => e);
 }
 
 source.getPlaylist = function (url) {
@@ -465,8 +467,9 @@ function getContentRecommendations(url, nextEpisodeResponseInitialData) {
 
     nextEpisodeResponse = nextEpisodeResponseInitialData;
 
-    const nextEpisode = (JSON.parse(nextEpisodeResponse.body)?.data ?? []).map(episodeToPlatformVideo);
-
+    const nextEpisode = (JSON.parse(nextEpisodeResponse.body)?.data ?? [])
+    .map(episodeToPlatformVideo)
+    .filter(e => e);
 
     if (!nextEpisode?.length) {
         return new ContentPager([], false);
@@ -691,9 +694,7 @@ function genericSearch(query, type, order, filters) {
         preferred_audio_language: getPreferedAudioLanguage(),
     });
 
-    const url = `https://www.crunchyroll.com/content/v2/discover/search?${queryString}`;
-
-    const response = http.GET(url, getHeaders(), true);
+    const response = http.GET(`https://www.crunchyroll.com/content/v2/discover/search?${queryString}`, getHeaders(), true);
     const contentList = [];
     if (response.isOk) {
         const searchResults = JSON.parse(response.body)?.data ?? [];
@@ -702,7 +703,10 @@ function genericSearch(query, type, order, filters) {
             if (searchResult.type === "episode") {
                 searchResult.items
                     .forEach((metadata) => {
-                        contentList.push(episodeToPlatformVideo(metadata));
+                        const content = episodeToPlatformVideo(metadata);
+                        if(content) {
+                            contentList.push(content);
+                        }
                     });
             }
 
@@ -754,7 +758,7 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
     const durationInMs = episode?.episode_metadata?.duration_ms ?? 0;
 
 
-    const premiumSuffix = isPremiumOnly && !local_state.isPremium ? ' (premium)' : '';
+    const premiumSuffix = isPremiumOnly && !local_state.isPremium ? ' (premium) - ' : '';
 
     const nameParts = [
         `S${episode.episode_metadata.season_number}` +
