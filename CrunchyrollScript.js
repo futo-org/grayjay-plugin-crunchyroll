@@ -22,6 +22,7 @@ let local_state = {
     headers: {},
     channels: {},
     isPremium: false,
+    accountId: '',
 };
 let config = {};
 let UNAVAILABLE_OPTIONS = [];
@@ -46,7 +47,8 @@ const local_source = {
     getContentRecommendations,
     isChannelUrl,
     isPlaylistUrl,
-    getUserSubscriptions
+    getUserSubscriptions,
+    getUserPlaylists,
 };
 init_source(local_source);
 function init_source(local_source) {
@@ -79,6 +81,8 @@ function enable(conf, settings, saved_state) {
     if (saved_state) {
         local_state = JSON.parse(saved_state);
     }
+
+    getHeaders();
 }
 //#endregion
 function disable() {
@@ -420,36 +424,119 @@ source.getPlaylist = function (url) {
         throw new ScriptException(`Invalid playlist URL: ${url}`);
     }
 
-    const seasonId = extractSeasonId(url);
+    if(url.startsWith("crunchyroll:playlist")) {
+        
+        const playlistId = url.split(":")[2];
 
-    if (!seasonId) {
-        throw new ScriptException(`Invalid playlist URL: ${url}`);
+        const itemsPerPage = 10;
+
+        const urlPaths = {
+            'watchlist': 'discover/',
+            'watch-history': '',
+        }
+
+        function getReqUrl(playlistId, start = 0) {
+            return `https://www.crunchyroll.com/content/v2/${urlPaths[playlistId]}${local_state.accountId}/${playlistId}?order=desc&n=${itemsPerPage}&start=${start}&preferred_audio_language=en-US&locale=en-US`;
+        }
+
+        const reqUrl = getReqUrl(playlistId);
+        
+        
+        const response = http.GET(reqUrl, getHeaders(), true);
+        
+        if (response.isOk) {
+
+            let episodeIds = [];
+            
+            const data = JSON.parse(response.body);
+            
+            episodeIds = data.data.map(e => e.panel.id);
+            
+            const total = data.total;
+            const pendingPages = Math.ceil(total / itemsPerPage) - 1;
+
+            let batchRequests = http.batch();
+
+            Array
+                .from({ length: pendingPages }, (_, i) => {
+                    return getReqUrl(playlistId, (i+1) * itemsPerPage);
+                })
+                .forEach(url => { 
+                    batchRequests.GET(url, getHeaders(), true);
+                });
+
+            const responses = batchRequests.execute();
+
+            responses
+                .filter(r => r.isOk)
+                .map(r => JSON.parse(r.body))
+                .forEach(data => {
+                    episodeIds = [...episodeIds, ...data.data.map(e => e.panel.id)];
+                });
+
+            const episodeListResponse = http.GET(
+                `${BASE_URL}/content/v2/cms/objects/${episodeIds.join(",")}?ratings=true`,
+                getHeaders(),
+                true
+            );
+
+            let contentList = [];
+
+            if (episodeListResponse.isOk) {
+                const episodes = JSON.parse(episodeListResponse.body)?.data ?? [];
+                contentList = episodes.map(e => episodeToPlatformVideo(e, {isPlaylist: true})).filter(e => e);
+            }
+
+            return new PlatformPlaylistDetails({
+                url: '',
+                id: new PlatformID(PLATFORM, '', config.id),
+                author: new PlatformAuthorLink(
+                    new PlatformID(PLATFORM, '', config.id),
+                    '',// author name
+                    '',// author url
+                ),
+                name: playlistId,// playlist name
+                thumbnail: '',
+                videoCount: contentList.length ?? 0,
+                contents: new VideoPager(contentList),
+                shareUrl: '',
+            });
+            
+        }
+
+    } else {
+        const seasonId = extractSeasonId(url);
+
+        if (!seasonId) {
+            throw new ScriptException(`Invalid playlist URL: ${url}`);
+        }
+
+        const urlParams = new URLSearchParams(url.split('?')[1]);
+
+        const name = urlParams.get('name');
+        const serieTitle = urlParams.get('serieTitle') ?? '';
+        const serieUrl = urlParams.get('serieUrl') ?? '';
+        const seriesId = urlParams.get('seriesId') ?? '';
+
+
+        const seasonEpisodes = getSeasonEpisodes(seasonId);
+
+        return new PlatformPlaylistDetails({
+            url: '',
+            id: new PlatformID(PLATFORM, '', config.id),
+            author: new PlatformAuthorLink(
+                new PlatformID(PLATFORM, seriesId, config.id),
+                serieTitle,// author name
+                serieUrl,// author url
+            ),
+            name: name,// playlist name
+            thumbnail: '',
+            videoCount: seasonEpisodes.length ?? 0,
+            contents: new VideoPager(seasonEpisodes),
+            shareUrl: '',
+        });
     }
-
-    const urlParams = new URLSearchParams(url.split('?')[1]);
-
-    const name = urlParams.get('name');
-    const serieTitle = urlParams.get('serieTitle') ?? '';
-    const serieUrl = urlParams.get('serieUrl') ?? '';
-    const seriesId = urlParams.get('seriesId') ?? '';
-
-
-    const seasonEpisodes = getSeasonEpisodes(seasonId);
-
-    return new PlatformPlaylistDetails({
-        url: '',
-        id: new PlatformID(PLATFORM, '', config.id),
-        author: new PlatformAuthorLink(
-            new PlatformID(PLATFORM, seriesId, config.id),
-            serieTitle,// author name
-            serieUrl,// author url
-        ),
-        name: name,// playlist name
-        thumbnail: '',
-        videoCount: seasonEpisodes.length ?? 0,
-        contents: new VideoPager(seasonEpisodes),
-        shareUrl: '',
-    });
+    
 };
 
 //#endregion
@@ -662,7 +749,7 @@ function getContentDetails(url) {
 //#endregion
 //#region playlists
 function isPlaylistUrl(url) {
-    return isValidCrunchyrollSeasonUrl(url);
+    return isValidCrunchyrollSeasonUrl(url) || url.startsWith("crunchyroll:playlist");
 }
 //#endregion
 //#region channel
@@ -679,6 +766,14 @@ function isChannelUrl(url) {
 //#region other
 function getUserSubscriptions() {
     return [];
+}
+
+function getUserPlaylists() {
+    
+    return [
+        'crunchyroll:playlist:watchlist',
+        'crunchyroll:playlist:watch-history',
+    ]
 }
 //#endregion
 //#region utilities
@@ -969,6 +1064,8 @@ function renewSession() {
 
         local_state.isPremium = payload.benefits.some(benefit => benefit === 'cr_premium');
         local_state.concurrentStreams = payload.benefits.find(benefit => benefit.startsWith('concurrent_streams'))?.split('.').pop();
+        local_state.accountId = payload.etp_user_id;
+        
     }
 }
 
