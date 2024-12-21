@@ -765,7 +765,40 @@ function isChannelUrl(url) {
 //#endregion
 //#region other
 function getUserSubscriptions() {
-    return [];
+
+    const subscriptions = [];
+
+    try {
+        const response = http.GET(`https://www.crunchyroll.com/content/v2/${local_state.accountId}/custom-lists?preferred_audio_language=en-US&locale=en-US`, getHeaders(), true);
+    
+        if (response.isOk) {
+            
+            const listsIds = JSON.parse(response.body)?.data?.map(l => l.list_id) ?? [];
+    
+            if(listsIds.length) {
+                const batchRequests = http.batch();
+    
+                listsIds.forEach(listId => {
+                    batchRequests.GET(`https://www.crunchyroll.com/content/v2/${local_state.accountId}/custom-lists/${listId}?preferred_audio_language=en-US&locale=en-US`, getHeaders(), true);
+                });
+        
+                batchRequests
+                    .execute()
+                    .filter(r => r.isOk)
+                    .map(r => JSON.parse(r.body))
+                    .forEach(list => {
+                    list.data.forEach(item => {
+                        subscriptions.push(`${SERIES_URL_PREFIX}${item.id}/${item.panel.slug_title}`);
+                    });
+                });
+            }
+        }
+    } catch(e) {
+        log(e);
+        bridge.toast("Failed to fetch subscriptions");
+    }
+    
+    return subscriptions;
 }
 
 function getUserPlaylists() {
