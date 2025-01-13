@@ -1,5 +1,27 @@
 #!/bin/sh
+
 DOCUMENT_ROOT=/var/www/sources
+PRE_RELEASE=false  # Default to false if --pre-release is not provided
+
+# Parse arguments
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --pre-release)
+      PRE_RELEASE=true  # Set to true if --pre-release is passed
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+# Determine deployment directory
+if [ "$PRE_RELEASE" = "true" ]; then
+    DEPLOY_DIR="$DOCUMENT_ROOT/Crunchyroll/pre-release"
+else
+    DEPLOY_DIR="$DOCUMENT_ROOT/Crunchyroll"
+fi
 
 # Take site offline
 echo "Taking site offline..."
@@ -7,11 +29,11 @@ touch $DOCUMENT_ROOT/maintenance.file
 
 # Swap over the content
 echo "Deploying content..."
-mkdir -p $DOCUMENT_ROOT/Crunchyroll
-cp CrunchyrollIcon.png $DOCUMENT_ROOT/Crunchyroll
-cp CrunchyrollConfig.json $DOCUMENT_ROOT/Crunchyroll
-cp CrunchyrollScript.js $DOCUMENT_ROOT/Crunchyroll
-sh sign.sh $DOCUMENT_ROOT/Crunchyroll/CrunchyrollScript.js $DOCUMENT_ROOT/Crunchyroll/CrunchyrollConfig.json
+mkdir -p "$DEPLOY_DIR"
+cp CrunchyrollIcon.png "$DEPLOY_DIR"
+cp CrunchyrollConfig.json "$DEPLOY_DIR"
+cp CrunchyrollScript.js "$DEPLOY_DIR"
+sh sign.sh "$DEPLOY_DIR/CrunchyrollScript.js" "$DEPLOY_DIR/CrunchyrollConfig.json"
 
 # Notify Cloudflare to wipe the CDN cache
 echo "Purging Cloudflare cache for zone $CLOUDFLARE_ZONE_ID..."
