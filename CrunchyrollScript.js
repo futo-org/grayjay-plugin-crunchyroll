@@ -707,10 +707,12 @@ function getContentDetails(url) {
     const { likes, dislikes } = parseLikesAndDislikes(metadata.rating);
     const images = metadata?.images?.thumbnail?.[0] ?? [];
 
+    const seasonEpisodeIdPair = `S${metadata.episode_metadata.season_number}E${metadata.episode_metadata.episode_number}`;
+
     const thumbnails = new Thumbnails(images.map((image) => new Thumbnail(image.source, image.height)));
     const result = new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
-        name: `S${metadata.episode_metadata.season_number}E${metadata.episode_metadata.episode_number} - ${metadata.title} `,
+        name: metadata.title ? `${seasonEpisodeIdPair} - ${metadata.title} `: seasonEpisodeIdPair,
         thumbnails: thumbnails,
         author: new PlatformAuthorLink(
             new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), 
