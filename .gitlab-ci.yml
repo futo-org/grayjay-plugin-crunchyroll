@@ -11,6 +11,7 @@ deploy-main:
 deploy-dev:
   stage: deploy
   script:
-    - sh deploy.sh --pre-release
+    - export PRE_RELEASE=true
+    - sh deploy.sh
   only:
     - dev
