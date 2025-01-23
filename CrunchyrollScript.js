@@ -196,14 +196,14 @@ function getHome() {
             let recommendationsSet = new Set();
 
             freeToWatchResponses.forEach(response => {
-                if (!response.isOk) {
-                    throw new ScriptException("Failed to fetch free-to-watch content");
+                
+                if (response.isOk) {
+                    const freeToWatchBody = JSON.parse(response.body);
+                    const freeToWatchEpisodes = freeToWatchBody?.recommendations?.map(i => i.contentItemId) ?? [];
+                    freeToWatchEpisodes.forEach(id => recommendationsSet.add(id));
+                } else {
+                    bridge.log(JSON.stringify(response))
                 }
-
-                const freeToWatchBody = JSON.parse(response.body);
-                const freeToWatchEpisodes = freeToWatchBody?.recommendations.map(i => i.contentItemId) ?? [];
-
-                freeToWatchEpisodes.forEach(id => recommendationsSet.add(id));
             });
 
             return Array.from(recommendationsSet);
