@@ -196,14 +196,14 @@ function getHome() {
             let recommendationsSet = new Set();
 
             freeToWatchResponses.forEach(response => {
-                if (!response.isOk) {
-                    throw new ScriptException("Failed to fetch free-to-watch content");
+                
+                if (response.isOk) {
+                    const freeToWatchBody = JSON.parse(response.body);
+                    const freeToWatchEpisodes = freeToWatchBody?.recommendations?.map(i => i.contentItemId) ?? [];
+                    freeToWatchEpisodes.forEach(id => recommendationsSet.add(id));
+                } else {
+                    bridge.log(JSON.stringify(response))
                 }
-
-                const freeToWatchBody = JSON.parse(response.body);
-                const freeToWatchEpisodes = freeToWatchBody?.recommendations.map(i => i.contentItemId) ?? [];
-
-                freeToWatchEpisodes.forEach(id => recommendationsSet.add(id));
             });
 
             return Array.from(recommendationsSet);
@@ -670,10 +670,12 @@ function getContentDetails(url) {
                             "Content-Type": "application/octet-stream"
                         }, false).body;
 
-                        const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${video_id}/${play_response.token}`, getHeaders(), false);
-
-                        if (!deleteActiveStream.isOk) {
-                            bridge.toast(`Failed to delete active stream: ${deleteActiveStream.error}`);
+                        if(bridge.isLoggedIn()) {
+                            const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${video_id}/${play_response.token}`, getHeaders(), false);
+    
+                            if (!deleteActiveStream.isOk) {
+                                bridge.toast(`Failed to delete active stream: ${deleteActiveStream.error}`);
+                            }
                         }
 
                         return utility.fromBase64(response);
@@ -697,16 +699,27 @@ function getContentDetails(url) {
 
         metadata.description += alternateStreamsLabel;
     }
+    
+    const serieUrl = `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`;
+
+    const channel = getChannel(serieUrl);
 
     const { likes, dislikes } = parseLikesAndDislikes(metadata.rating);
     const images = metadata?.images?.thumbnail?.[0] ?? [];
 
+    const seasonEpisodeIdPair = `S${metadata.episode_metadata.season_number}E${metadata.episode_metadata.episode_number}`;
+
     const thumbnails = new Thumbnails(images.map((image) => new Thumbnail(image.source, image.height)));
     const result = new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
-        name: `S${metadata.episode_metadata.season_number}E${metadata.episode_metadata.episode_number} - ${metadata.title} `,
+        name: metadata.title ? `${seasonEpisodeIdPair} - ${metadata.title} `: seasonEpisodeIdPair,
         thumbnails: thumbnails,
-        author: new PlatformAuthorLink(new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), metadata.episode_metadata.series_title, `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`),
+        author: new PlatformAuthorLink(
+            new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), 
+            metadata.episode_metadata.series_title, 
+            serieUrl,
+            channel.thumbnail
+        ),
         datetime: new Date(metadata.episode_metadata.upload_date).getTime() / 1000,
         url,
         duration: metadata.episode_metadata.duration_ms / 1000,
