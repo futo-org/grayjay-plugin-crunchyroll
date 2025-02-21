@@ -163,23 +163,44 @@ function getHome() {
             });
         }
 
+        /**
+         * Extracts unique free-to-watch URLs from the provided homeBody object
+         * @param {Object} homeBody - The homeBody object containing children with link properties
+         * @returns {Set<string>} A Set of unique free-to-watch URLs
+         */
         extractFreeToWatchUrls(homeBody) {
-            const freeToWatch = homeBody?.children
-                .filter(i => (
-                    i.props.analyticsId.toLowerCase().includes("sampler") ||
-                    i.props.analyticsId.toLowerCase().includes("free")
-                ) && i.props.link)
-                .map(i => i.props.link) ?? [];
+            // Early return if homeBody or homeBody.children is null/undefined
+            if (!homeBody?.children) {
+                return new Set();
+            }
 
-            const freeToWatchFirstSeasonsUrl = homeBody?.children.find(
-                i => i.props.analyticsId === "Curation_Collections/Editorial/Free-to-Watch_First_Seasons"
-            )?.props?.link ?? '';
+            // Extract generic free/sampler URLs
+            const freeToWatch = homeBody.children
+                .filter(item => {
+                    // Check if analyticsId exists before calling toLowerCase()
+                    const analyticsId = item?.props?.analyticsId;
+                    return analyticsId &&
+                        (analyticsId.toLowerCase().includes("sampler") ||
+                            analyticsId.toLowerCase().includes("free")) &&
+                        item.props.link;
+                })
+                .map(item => item.props.link);
 
-            const newEpisodesSeasonalSamplerUrl = homeBody?.children.find(
-                i => i.props.analyticsId.includes("_Seasonal_Sampler")
-            )?.props?.link ?? '';
+            // Extract specific first seasons URL
+            const freeToWatchFirstSeasonsUrl = homeBody.children.find(
+                item => item?.props?.analyticsId === "Curation_Collections/Editorial/Free-to-Watch_First_Seasons"
+            )?.props?.link || '';
 
-            return new Set([...freeToWatch, freeToWatchFirstSeasonsUrl, newEpisodesSeasonalSamplerUrl]);
+            // Extract seasonal sampler URL
+            const newEpisodesSeasonalSamplerUrl = homeBody.children.find(
+                item => item?.props?.analyticsId && item.props.analyticsId.includes("_Seasonal_Sampler")
+            )?.props?.link || '';
+
+            // Combine all URLs and filter out empty strings
+            const allUrls = [...freeToWatch, freeToWatchFirstSeasonsUrl, newEpisodesSeasonalSamplerUrl]
+                .filter(Boolean);
+            // Return a Set of unique URLs
+            return new Set(allUrls);
         }
 
         fetchFreeToWatchContent(urlSet) {
