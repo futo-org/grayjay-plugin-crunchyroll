@@ -6,7 +6,7 @@
     "platformUrl": "https://crunchyroll.com",
     "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
     "scriptUrl": "./CrunchyrollScript.js",
-    "repositoryUrl": "https://futo.org",
+    "repositoryUrl": "https://gitlab.futo.org/videostreaming/plugins/crunchyroll",
     "version": 5,
     "iconUrl": "./CrunchyrollIcon.png",
     "id": "9bb33039-8580-48d4-9849-21319ae845a4",
