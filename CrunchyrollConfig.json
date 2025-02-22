@@ -7,7 +7,7 @@
     "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
     "scriptUrl": "./CrunchyrollScript.js",
     "repositoryUrl": "https://futo.org",
-    "version": 3,
+    "version": 4,
     "iconUrl": "./CrunchyrollIcon.png",
     "id": "9bb33039-8580-48d4-9849-21319ae845a4",
     "scriptSignature": "",
@@ -77,5 +77,10 @@
                 "th-TH - ไทย"
             ]
         }
-    ]
+    ],
+    "changelog": {
+		"4": [
+			"Add pagination to content and creators search;"
+		]
+	}
 }

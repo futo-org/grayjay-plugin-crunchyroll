@@ -845,42 +845,67 @@ function getUserPlaylists() {
 //#endregion
 //#region utilities
 function genericSearch(query, type, order, filters) {
-    log(query, order, filters, type);
-    const searchQuery = query.split(" ").join("+");
 
-    const queryString = objectToUrlEncodedString({
-        q: searchQuery,
-        type,
-        ratings: true,
-        locale: "en-US",
-        preferred_audio_language: getPreferedAudioLanguage(),
-    });
+    class GenericSearchPager extends VideoPager {
 
-    const response = http.GET(`https://www.crunchyroll.com/content/v2/discover/search?${queryString}`, getHeaders(), true);
-    const contentList = [];
-    if (response.isOk) {
-        const searchResults = JSON.parse(response.body)?.data ?? [];
-        searchResults.forEach((searchResult) => {
-            // handle other types in the future
-            if (searchResult.type === "episode") {
-                searchResult.items
-                    .forEach((metadata) => {
-                        const content = episodeToPlatformVideo(metadata);
-                        if(content) {
-                            contentList.push(content);
-                        }
-                    });
+        constructor({
+            videos = [],
+            hasMore = true,
+            context = { start: null },
+          } = {}) {
+            super(videos, hasMore, context);
+          }
+        
+        nextPage() {
+            log(query, order, filters, type);
+            const searchQuery = query.split(" ").join("+");
+
+            const start = this?.context?.start;
+
+            const queryString = objectToUrlEncodedString({
+                q: searchQuery,
+                type,
+                ratings: true,
+                locale: "en-US",
+                n: 100,
+                start,
+                preferred_audio_language: getPreferedAudioLanguage(),
+            });
+
+            const response = http.GET(`https://www.crunchyroll.com/content/v2/discover/search?${queryString}`, getHeaders(), true);
+            const contentList = [];
+            if (response.isOk) {
+                const searchResults = JSON.parse(response.body)?.data ?? [];
+                searchResults.forEach((searchResult) => {
+                    // handle other types in the future
+                    if (searchResult.type === "episode") {
+                        searchResult.items
+                            .forEach((metadata) => {
+                                const content = episodeToPlatformVideo(metadata);
+                                if (content) {
+                                    contentList.push(content);
+                                }
+                            });
+                    }
+
+                    if (searchResult.type === "series") {
+                        searchResult.items
+                            .forEach((metadata) => {
+                                contentList.push(serieToPlatformChannel(metadata));
+                            });
+                    }
+                });
             }
 
-            if (searchResult.type === "series") {
-                searchResult.items
-                    .forEach((metadata) => {
-                        contentList.push(serieToPlatformChannel(metadata));
-                    });
-            }
-        });
+            return new GenericSearchPager({
+                videos: contentList,
+                hasMore: contentList.length > 0,
+                context: { start: start + 100 },
+            });
+        }
     }
-    return new ContentPager(contentList, false);
+    
+    return new GenericSearchPager().nextPage();
 }
 
 function serieToPlatformChannel(serie) {
