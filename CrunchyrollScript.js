@@ -1,10 +1,28 @@
 //#region constants
 const PLATFORM = "Crunchyroll";
 const BASE_URL = "https://www.crunchyroll.com";
+const PREMIUM_URL = "https://www.crunchyroll.com/premium";
+const AUTH_TOKEN_URL = "https://www.crunchyroll.com/auth/v1/token";
+const SERIES_URL_PREFIX = "https://www.crunchyroll.com/series/";
+const WIDEVINE_LICENSE_URL = "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine?specConform=true";
+const USER_PROFILE_API_URL = "https://www.crunchyroll.com/accounts/v1/me/profile";
+
+const EXPLORE_URL_TEMPLATE = "https://www.crunchyroll.com/content/v2/discover/browse?{query}";
+const LOCALE_URL_TEMPLATE = "https://www.crunchyroll.com/f/v1/home?locale={locale}";
+const EPISODE_URL_TEMPLATE = "https://www.crunchyroll.com/watch/{episode_id}/{episode_slug_title}";
+const SEARCH_TEMPLATE_URL = "https://www.crunchyroll.com/content/v2/discover/search?{queryString}";
+const OBJECT_WITH_RATINGS_URL_TEMPLATE = "https://www.crunchyroll.com/content/v2/cms/objects/{objectId}?ratings=true&{queryString}";
+const OBJECT_SERIE_SEASONS_URL_TEMPLATE = "https://www.crunchyroll.com/content/v2/cms/series/{seriesId}/seasons?{queryString}";
+const OBJECT_SEASON_EPISODES_URL_TEMPLATE = "https://www.crunchyroll.com/content/v2/cms/seasons/{seasonId}/episodes?{queryString}";
+const VIDEO_SKIP_EVENTS_URL_TEMPLATE = "https://static.crunchyroll.com/skip-events/production/{videoId}.json";
+const ACCOUNT_INFO_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{account_id}/custom-lists?{queryString}";
+const SUBSCRIPTIONS_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{account_id}/custom-lists/{list_id}?{queryString}";
+const PLAY_URL_TEMPLATE = "https://cr-play-service.prd.crunchyrollsvc.com/v1/{video_id}/web/firefox/play";
+
 const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]+)(?:\/.*)?$/;
 const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/series\/([A-Z0-9]+)(?:\/|$)/;
-const SERIES_URL_PREFIX = "https://www.crunchyroll.com/series/";
 const REGEX_INTERNAL_PLAYLIST_URL = /^https:\/\/grayjay\.internal\/Crunchyroll\/playlist\/([A-Z0-9]+)(?:\?.*)?$/;
+
 const ITEMS_PER_PAGE = 100;
 // const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0" as const
 // set missing constants
@@ -106,25 +124,25 @@ function getHome() {
         }
 
         nextPage() {
-            const locale = local_settings?.preferLocale ?? "en-US";
+
+            const local_settings = getLocalizationSettings();
             const start = this.context.offset || 0;
             const isFirstPage = start === 0;
 
             const query = objectToUrlEncodedString({
+                ...local_settings,
                 type: "episode",
-                preferred_audio_language: getPreferedAudioLanguage(),
                 n: ITEMS_PER_PAGE,
                 start,
-                locale,
                 sort_by: "newly_added",
                 ratings: true,
             });
 
             let batchRequests = http.batch();
-            batchRequests.GET(`${BASE_URL}/content/v2/discover/browse?${query}`, getHeaders());
+            batchRequests.GET(replaceUrlPlaceholders(EXPLORE_URL_TEMPLATE, { query }), getHeaders());
 
             if (isFirstPage) {
-                batchRequests.GET(`${BASE_URL}/f/v1/home?locale=${locale}`, getHeaders(), true);
+                batchRequests.GET(replaceUrlPlaceholders(LOCALE_URL_TEMPLATE, { locale: local_settings.locale }), getHeaders(), true);
             }
 
             const responses = batchRequests.execute();
@@ -152,7 +170,7 @@ function getHome() {
 
             const platformVideos = [...allEpisodes, ...discoverBody.data]
                 .map(e => episodeToPlatformVideo(e))
-                .filter(e => e);
+                .filter(Boolean);
 
             const offset = this.context.offset + ITEMS_PER_PAGE;
 
@@ -234,7 +252,7 @@ function getHome() {
             if (!ids.length) return [];
 
             const episodeResponse = http.GET(
-                `${BASE_URL}/content/v2/cms/objects/${ids.join(",")}?ratings=true`,
+                replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: ids.join(","), queryString: getLocationQueryString()  }),
                 getHeaders(),
                 true
             );
@@ -305,13 +323,9 @@ function getChannelContents(url) {
         throw new ScriptException("Invalid channel URL");
     }
 
-    const queryString = objectToUrlEncodedString({
-        locale: "en-US",
-        preferred_audio_language: getPreferedAudioLanguage(),
-    });
 
     const seasonsResponse = http
-        .GET(`https://www.crunchyroll.com/content/v2/cms/series/${seriesId}/seasons?${queryString}`, getHeaders(), true);
+        .GET(replaceUrlPlaceholders(OBJECT_SERIE_SEASONS_URL_TEMPLATE, { seriesId: seriesId, queryString: objectToUrlEncodedString(getLocalizationSettings()) }), getHeaders(), true);
 
     if (!seasonsResponse.isOk) {
         throw new ScriptException("Failed to fetch serie season");
@@ -359,8 +373,8 @@ function getChannelPlaylists(url) {
 
     const [serieInfoResponse, seasonsResponse] = http
         .batch()
-        .GET(`https://www.crunchyroll.com/content/v2/cms/objects/${seriesId}?ratings=true`, getHeaders(), false)
-        .GET(`https://www.crunchyroll.com/content/v2/cms/series/${seriesId}/seasons?force_locale=&locale=en-US`, getHeaders(), true)
+        .GET(replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: seriesId, queryString: getLocationQueryString()  }), getHeaders(), false)
+        .GET(replaceUrlPlaceholders(OBJECT_SERIE_SEASONS_URL_TEMPLATE, { seriesId: seriesId, queryString: objectToUrlEncodedString(getLocalizationSettings()) }), getHeaders(), true)
         .execute();
 
     if (!serieInfoResponse.isOk) {
@@ -420,12 +434,7 @@ function getSeasonEpisodes(seasonId, opts = { isPlaylist: true, filterCb: null }
         opts.filterCb = () => true;
     }
 
-    const queryString = objectToUrlEncodedString({
-        locale: "en-US",
-        preferred_audio_language: getPreferedAudioLanguage(),
-    });
-
-    const seasonEpisodes = http.GET(`https://www.crunchyroll.com/content/v2/cms/seasons/${seasonId}/episodes?${queryString}`, getHeaders(), true);
+    const seasonEpisodes = http.GET(replaceUrlPlaceholders(OBJECT_SEASON_EPISODES_URL_TEMPLATE, { seasonId, queryString: objectToUrlEncodedString(getLocalizationSettings()) }), getHeaders(), true);
 
     if (!seasonEpisodes.isOk) {
         throw new ScriptException("Failed to fetch season episodes");
@@ -436,7 +445,7 @@ function getSeasonEpisodes(seasonId, opts = { isPlaylist: true, filterCb: null }
     return episodes
         .filter(opts.filterCb)
         .map(e => episodeToPlatformVideo(e, opts))
-        .filter(e => e);
+        .filter(Boolean);
 }
 
 source.getPlaylist = function (url) {
@@ -457,7 +466,7 @@ source.getPlaylist = function (url) {
         }
 
         function getReqUrl(playlistId, start = 0) {
-            return `https://www.crunchyroll.com/content/v2/${urlPaths[playlistId]}${local_state.accountId}/${playlistId}?order=desc&n=${itemsPerPage}&start=${start}&preferred_audio_language=en-US&locale=en-US`;
+            return `https://www.crunchyroll.com/content/v2/${urlPaths[playlistId]}${local_state.accountId}/${playlistId}?order=desc&n=${itemsPerPage}&start=${start}&preferred_audio_language=ja-JP&locale=ja-JP`;
         }
 
         const reqUrl = getReqUrl(playlistId);
@@ -496,7 +505,7 @@ source.getPlaylist = function (url) {
                 });
 
             const episodeListResponse = http.GET(
-                `${BASE_URL}/content/v2/cms/objects/${episodeIds.join(",")}?ratings=true`,
+                replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, {objectId: episodeIds.join(","), queryString: getLocationQueryString() }),
                 getHeaders(),
                 true
             );
@@ -505,7 +514,7 @@ source.getPlaylist = function (url) {
 
             if (episodeListResponse.isOk) {
                 const episodes = JSON.parse(episodeListResponse.body)?.data ?? [];
-                contentList = episodes.map(e => episodeToPlatformVideo(e, {isPlaylist: true})).filter(e => e);
+                contentList = episodes.map(e => episodeToPlatformVideo(e, {isPlaylist: true})).filter(Boolean);
             }
 
             return new PlatformPlaylistDetails({
@@ -577,7 +586,7 @@ function getContentRecommendations(url, nextEpisodeResponseInitialData) {
 
     const nextEpisode = (JSON.parse(nextEpisodeResponse.body)?.data ?? [])
     .map(episodeToPlatformVideo)
-    .filter(e => e);
+    .filter(Boolean);
 
     if (!nextEpisode?.length) {
         return new ContentPager([], false);
@@ -590,7 +599,7 @@ function getContentChapters(url) {
 
     const videoId = url.match(CONTENT_DETAIL_REGEX)?.[1];
 
-    const response = http.GET(`https://static.crunchyroll.com/skip-events/production/${videoId}.json`, {}, false);
+    const response = http.GET(replaceUrlPlaceholders(VIDEO_SKIP_EVENTS_URL_TEMPLATE, { videoId }), {}, false);
 
     if (!response.isOk) {
         throw new ScriptException("Failed to fetch content chapters");
@@ -619,8 +628,8 @@ function getContentDetails(url) {
     }
     const responses = http
         .batch()
-        .GET(`https://www.crunchyroll.com/content/v2/cms/objects/${video_id}?ratings=true`, getHeaders(), false)
-        .GET(`https://cr-play-service.prd.crunchyrollsvc.com/v1/${video_id}/web/firefox/play`, getHeaders(), false)
+        .GET(replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: video_id, queryString: getLocationQueryString()  }), getHeaders(), false)
+        .GET(replaceUrlPlaceholders(PLAY_URL_TEMPLATE, { video_id: video_id }), getHeaders(), false)
         .execute();
     if (responses[0] === undefined || responses[1] === undefined) {
         throw new ScriptException("unreachable");
@@ -677,7 +686,7 @@ function getContentDetails(url) {
                 // headers for the manifest
                 headers: getHeaders(),
             },
-            licenseUri: "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine?specConform=true",
+            licenseUri: WIDEVINE_LICENSE_URL,
             getLicenseRequestExecutor: () => {
                 return {
                     executeRequest: (url, _headers, _method, license_request_data) => {
@@ -755,6 +764,16 @@ function getContentDetails(url) {
                 url: subtitleInfo.url,
                 format: "text/vtt",
                 getSubtitles: () => {
+ 
+                    if(bridge.isLoggedIn()){
+                        try {
+                            http.request('PATCH', USER_PROFILE_API_URL, JSON.stringify({ preferred_content_subtitle_language: subtitleInfo.language}), getHeaders(), true);
+                        } catch(e) {
+                            log(e);
+                            log('failed to set subtitle')
+                        }
+                    }
+
                     const assSubtitleResponse = http.GET(subtitleInfo.url, {}, false);
                     if (assSubtitleResponse.isOk) {
                         const assSubtitle = assSubtitleResponse.body;
@@ -796,6 +815,11 @@ function isPlaylistUrl(url) {
 function isChannelUrl(url) {
     return SERIES_REGEX.test(url);
 }
+
+function getLocationQueryString(){
+    return objectToUrlEncodedString(getLocalizationSettings());
+}
+
 //#endregion
 //#region other
 function getUserSubscriptions() {
@@ -803,7 +827,7 @@ function getUserSubscriptions() {
     const subscriptions = [];
 
     try {
-        const response = http.GET(`https://www.crunchyroll.com/content/v2/${local_state.accountId}/custom-lists?preferred_audio_language=en-US&locale=en-US`, getHeaders(), true);
+        const response = http.GET(replaceUrlPlaceholders(ACCOUNT_INFO_URL_PLACEHOLDER, { account_id: local_state.accountId, queryString: getLocationQueryString() }), getHeaders(), true);
     
         if (response.isOk) {
             
@@ -813,7 +837,7 @@ function getUserSubscriptions() {
                 const batchRequests = http.batch();
     
                 listsIds.forEach(listId => {
-                    batchRequests.GET(`https://www.crunchyroll.com/content/v2/${local_state.accountId}/custom-lists/${listId}?preferred_audio_language=en-US&locale=en-US`, getHeaders(), true);
+                    batchRequests.GET(replaceUrlPlaceholders(SUBSCRIPTIONS_URL_PLACEHOLDER, { account_id: local_state.accountId, list_id: listId, queryString: getLocationQueryString() }), getHeaders(), true);
                 });
         
                 batchRequests
@@ -863,16 +887,17 @@ function genericSearch(query, type, order, filters) {
             const start = this?.context?.start;
 
             const queryString = objectToUrlEncodedString({
+                ...getLocalizationSettings(),
                 q: searchQuery,
                 type,
                 ratings: true,
-                locale: "en-US",
-                n: 100,
-                start,
-                preferred_audio_language: getPreferedAudioLanguage(),
+                n: ITEMS_PER_PAGE,
+                start
             });
 
-            const response = http.GET(`https://www.crunchyroll.com/content/v2/discover/search?${queryString}`, getHeaders(), true);
+
+            const response = http.GET(replaceUrlPlaceholders(SEARCH_TEMPLATE_URL, { queryString }), getHeaders(), true);
+            
             const contentList = [];
             if (response.isOk) {
                 const searchResults = JSON.parse(response.body)?.data ?? [];
@@ -900,7 +925,7 @@ function genericSearch(query, type, order, filters) {
             return new GenericSearchPager({
                 videos: contentList,
                 hasMore: contentList.length > 0,
-                context: { start: start + 100 },
+                context: { start: start + ITEMS_PER_PAGE },
             });
         }
     }
@@ -933,7 +958,7 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
 
     const t = episode?.images?.thumbnail?.[0]?.map((image) => new Thumbnail(image.source, image.height)) ?? [];
     const thumbnails = new Thumbnails(t);
-    const url = `https://www.crunchyroll.com/watch/${episode.id}/${episode.slug_title}`;
+    const url = replaceUrlPlaceholders(EPISODE_URL_TEMPLATE, {episode_id: episode.id, episode_slug_title: episode.slug_title});
 
     const isPremiumOnly = episode?.episode_metadata?.availability_status === 'premium_only';
     const isLoggedIn = bridge.isLoggedIn();
@@ -972,7 +997,7 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
     }
     else if (premiumContentUnavailableOption === "As locked Content") {
         const lockDescription = isLoggedIn ? 'This content is only available to premium users' : 'Login with a premium account to watch';
-        const unlockUrl = isLoggedIn ? "https://www.crunchyroll.com/premium" : "";
+        const unlockUrl = isLoggedIn ? PREMIUM_URL : "";
         return new PlatformLockedContent({
             id: new PlatformID(PLATFORM, episode.id, plugin.config.id),
             name,
@@ -1006,7 +1031,7 @@ function extractSeriesId(url) {
     return match ? match[1] : null;
 }
 function getObjectMetadata(id, options = { first: false }) {
-    const response = http.GET(`https://www.crunchyroll.com/content/v2/cms/objects/${id}?ratings=true`, getHeaders(), false);
+    const response = http.GET(replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: id, queryString: getLocationQueryString() }), getHeaders(), false);
     if (!response.isOk) {
         throw new ScriptException(`Failed to fetch metadata for content with ID ${id}`);
     }
@@ -1106,14 +1131,13 @@ function assToVtt(assContent) {
 
 function get_bearer() {
 
-    const html = http.GET("https://www.crunchyroll.com/", {}, true).body;
+    const html = http.GET(BASE_URL, { 'User-Agent': config.authentication.userAgent }, true).body;
     const match_result = html.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
     if (match_result === null || match_result[1] === undefined) {
         throw new ScriptException("regex error");
     }
     const accountAuthClientId = match_result[1];
     const auth = utility.toBase64(string_to_bytes(`${accountAuthClientId}:`));
-    const token_url = "https://www.crunchyroll.com/auth/v1/token";
     // TODO the bearer token likely needs to be refreshed after some amount of time
     // here is an example for Spotify if that's helpful
     // https://gitlab.futo.org/videostreaming/plugins/spotify/-/blob/master/src/SpotifyScript.ts?ref_type=heads#L255
@@ -1121,14 +1145,14 @@ function get_bearer() {
     let response;
 
     if (bridge.isLoggedIn()) {
-        response = JSON.parse(http.POST(token_url, "grant_type=etp_rt_cookie", {
+        response = JSON.parse(http.POST(AUTH_TOKEN_URL, "grant_type=etp_rt_cookie", {
             Authorization: `Basic ${auth}`,
             "Content-Type": "application/x-www-form-urlencoded",
         }, true).body);
         // 5 minutes before the token expires
     }
     else {
-        response = JSON.parse(http.POST(token_url, "grant_type=client_id", {
+        response = JSON.parse(http.POST(AUTH_TOKEN_URL, "grant_type=client_id", {
             Authorization: `Basic ${auth}`,
             "Content-Type": "application/x-www-form-urlencoded",
             "Etp-Anonymous-Id": "6ba29c34-469b-4597-9d0d-9bbc672fb2d7"
@@ -1148,6 +1172,7 @@ function renewSession() {
     local_state.access_token_expires_at = access_token_expires_at;
     local_state.headers = {
         Authorization: `Bearer ${access_token}`,
+        'User-Agent': config.authentication.userAgent
     };
 
     if (bridge.isLoggedIn()) {
@@ -1173,7 +1198,7 @@ function getHeaders() {
 }
 function getPreferedAudioLanguage() {
     // -1 Subtraction is done to account for the "Original" option and ignore it
-    return local_settings.preferedAudioLanguageOptionIndex ? PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferedAudioLanguageOptionIndex - 1] : undefined;
+    return local_settings.preferedAudioLanguageOptionIndex ? PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferedAudioLanguageOptionIndex - 1] : "ja-JP";
 }
 
 function decodeJWT(token) {
@@ -1212,6 +1237,52 @@ function decodeJWT(token) {
         };
     } catch (error) {
         throw new ScriptException(`JWT Decoding Error: ${error.message}`);
+    }
+}
+
+
+function replaceUrlPlaceholders(url, values) {
+    // Guard against invalid inputs
+    if (!url || typeof url !== 'string') {
+      return '';
+    }
+    
+    if (!values || typeof values !== 'object') {
+      return url;
+    }
+    
+    let newUrl = url;
+    
+    Object.keys(values).forEach((key) => {
+      // Look for placeholders like {key}
+      const placeholder = new RegExp(`\\{${key}\\}`, 'g');
+      
+      // Only replace if the value is defined
+      if (values[key] !== undefined && values[key] !== null) {
+        // Convert to string and encode URI components to prevent injection
+        // const safeValue = encodeURIComponent(String(values[key]));
+        const safeValue = String(values[key]);
+        newUrl = newUrl.replace(placeholder, safeValue);
+      }
+    });
+    
+    // Validate the resulting URL structure
+    try {
+      new URL(newUrl); // This will throw if the URL is invalid
+      return newUrl;
+    } catch (error) {
+      // If resulting URL is invalid, return original or empty string
+      console.warn('Generated URL is invalid:', newUrl);
+      return url.includes('://') ? url : '';
+    }
+}
+
+function getLocalizationSettings() {
+    // using same setting for know;
+    return {
+        locale: getPreferedAudioLanguage(),
+        preferred_audio_language: getPreferedAudioLanguage(),
+        force_locale: getPreferedAudioLanguage()
     }
 }
 
