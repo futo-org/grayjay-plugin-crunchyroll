@@ -34,7 +34,8 @@ Type.Feed.Albums = "ALBUMS";
 let local_settings = {
     premiumContentUnavailableIndex: 0,
     localeIndex: 0,
-    preferedAudioLanguageOptionIndex: 0
+    preferredAudioLanguageOptionIndex: 0,
+    subtitlesLanguageOptionIndex: 0
 };
 /** State */
 let local_state = {
@@ -42,12 +43,14 @@ let local_state = {
     channels: {},
     isPremium: false,
     accountId: '',
+    is_anonymous_session: true
 };
 let config = {};
 let UNAVAILABLE_OPTIONS = [];
 let PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES = {};
 let PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS = [];
 let LOCALE_OPTIONS = [];
+let SUBTITLE_OPTIONS = [];
 //#endregion
 //#region source methods
 const local_source = {
@@ -83,7 +86,7 @@ function enable(conf, settings, saved_state) {
     local_settings = settings;
     UNAVAILABLE_OPTIONS = loadOptionsForSetting("premiumContentUnavailableIndex");
 
-    PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES = loadOptionsForSetting("preferedAudioLanguageOptionIndex")
+    PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES = loadOptionsForSetting("preferredAudioLanguageOptionIndex")
         .filter(option => option !== "Original")
         .reduce((acc, option) => {
             const [langCode, langName] = option.split(" - ");
@@ -91,7 +94,14 @@ function enable(conf, settings, saved_state) {
             return acc;
         }, {});
 
-    LOCALE_OPTIONS = loadOptionsForSetting("preferedAudioLanguageOptionIndex")
+    LOCALE_OPTIONS = loadOptionsForSetting("localeIndex")
+        .map(option => {
+            const [langCode] = option.split(" - ");
+            return langCode;
+        });
+
+    SUBTITLE_OPTIONS = loadOptionsForSetting("subtitlesLanguageOptionIndex")
+        .filter(option => option !== "None")
         .map(option => {
             const [langCode] = option.split(" - ");
             return langCode;
@@ -101,7 +111,7 @@ function enable(conf, settings, saved_state) {
 
     if (IS_TESTING) {
         local_settings.premiumContentUnavailableIndex = 0; // As locked content
-        local_settings.preferedAudioLanguageOptionIndex = 0; // Original
+        local_settings.preferredAudioLanguageOptionIndex = 0; // Original
     }
 
     if (saved_state) {
@@ -109,6 +119,11 @@ function enable(conf, settings, saved_state) {
     }
 
     getHeaders();
+
+    //set settings
+    savePreferences();
+    
+
 }
 //#endregion
 function disable() {
@@ -176,7 +191,7 @@ function getHome() {
                 allEpisodes = this.fetchEpisodesByIds(recommendations);
             }
 
-            const preferedAudioLanguage = getPreferedAudioLanguage();
+            const preferedAudioLanguage = getPreferredAudioLanguage();
 
             const platformVideos = 
                 filterEpisodesByLanguage([...allEpisodes, ...discoverBody.data], preferedAudioLanguage)
@@ -775,16 +790,6 @@ function getContentDetails(url) {
                 url: subtitleInfo.url,
                 format: "text/vtt",
                 getSubtitles: () => {
- 
-                    if(bridge.isLoggedIn()){
-                        try {
-                            http.request('PATCH', USER_PROFILE_API_URL, JSON.stringify({ preferred_content_subtitle_language: subtitleInfo.language}), getHeaders(), true);
-                        } catch(e) {
-                            log(e);
-                            log('failed to set subtitle')
-                        }
-                    }
-
                     const assSubtitleResponse = http.GET(subtitleInfo.url, {}, false);
                     if (assSubtitleResponse.isOk) {
                         const assSubtitle = assSubtitleResponse.body;
@@ -1185,7 +1190,7 @@ function renewSession() {
         Authorization: `Bearer ${access_token}`,
         'User-Agent': config.authentication.userAgent
     };
-
+    
     if (bridge.isLoggedIn()) {
 
         const { payload } = decodeJWT(access_token);
@@ -1193,23 +1198,29 @@ function renewSession() {
         local_state.isPremium = payload.benefits.some(benefit => benefit === 'cr_premium');
         local_state.concurrentStreams = payload.benefits.find(benefit => benefit.startsWith('concurrent_streams'))?.split('.').pop();
         local_state.accountId = payload.etp_user_id;
-        
+         
     }
+
+    local_state.is_anonymous_session = !bridge.isLoggedIn();
 }
 
 function getHeaders() {
 
     const validAuthSession = local_state.access_token_expires_at > Date.now();
 
-    if (!validAuthSession) {
+    if (!validAuthSession || (local_state.is_anonymous_session && bridge.isLoggedIn())) {
         renewSession();
     }
 
     return local_state.headers;
 }
-function getPreferedAudioLanguage() {
+function getPreferredAudioLanguage() {
     // -1 Subtraction is done to account for the "Original" option and ignore it
-    return local_settings.preferedAudioLanguageOptionIndex ? PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferedAudioLanguageOptionIndex - 1] : "ja-JP";
+    return local_settings.preferredAudioLanguageOptionIndex ? PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferredAudioLanguageOptionIndex - 1] : "ja-JP";
+}
+
+function getPreferredSubtitleLanguage() {
+    return local_settings.subtitlesLanguageOptionIndex ? SUBTITLE_OPTIONS[local_settings.subtitlesLanguageOptionIndex] : "en-US";
 }
 
 function getPreferedLocale() {
@@ -1296,8 +1307,8 @@ function getLocalizationSettings() {
     // using same setting for know;
     return {
         locale: getPreferedLocale(),
-        preferred_audio_language: getPreferedAudioLanguage(),
-        force_locale: getPreferedAudioLanguage()
+        preferred_audio_language: getPreferredAudioLanguage(),
+        force_locale: getPreferredAudioLanguage()
     }
 }
 
@@ -1363,6 +1374,43 @@ function filterEpisodesByLanguage(episodes, preferredLanguage) {
     }
     
     return filteredEpisodes;
+}
+
+function savePreferences(){
+    if (bridge.isLoggedIn()) {
+        try {
+
+            let batch = http.batch();
+
+            [
+                { "preferred_content_audio_language": getPreferredAudioLanguage() },
+                { "preferred_content_subtitle_language": getPreferredSubtitleLanguage() },
+                { "do_not_sell": true },
+            ].forEach(requestBody => {
+                batch = batch.requestWithBody(
+                    'PATCH',
+                    USER_PROFILE_API_URL,
+                    JSON.stringify(requestBody),
+                    { ...getHeaders(), 'Content-Type': 'application/json' },
+                    true,
+                )
+            });
+
+            const responses = batch.execute();
+            
+            if(IS_TESTING) {
+                log(`
+                    Response successful:
+                    preferred_content_audio_language: ${responses[0].isOk}
+                    preferred_content_subtitle_language: ${responses[1].isOk}
+                    do_not_sell: ${responses[2].isOk}`);
+            }
+
+        } catch (e) {
+            log(e);
+            log('failed to set preferences')
+        }
+    }
 }
 
 //#endregion
