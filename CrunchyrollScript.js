@@ -33,6 +33,7 @@ Type.Feed.Playlists = "PLAYLISTS";
 Type.Feed.Albums = "ALBUMS";
 let local_settings = {
     premiumContentUnavailableIndex: 0,
+    localeIndex: 0,
     preferedAudioLanguageOptionIndex: 0
 };
 /** State */
@@ -46,6 +47,7 @@ let config = {};
 let UNAVAILABLE_OPTIONS = [];
 let PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES = {};
 let PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS = [];
+let LOCALE_OPTIONS = [];
 //#endregion
 //#region source methods
 const local_source = {
@@ -88,6 +90,12 @@ function enable(conf, settings, saved_state) {
             acc[langCode] = { langCode, langName };
             return acc;
         }, {});
+
+    LOCALE_OPTIONS = loadOptionsForSetting("preferedAudioLanguageOptionIndex")
+        .map(option => {
+            const [langCode] = option.split(" - ");
+            return langCode;
+        });
 
     PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS = Object.keys(PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES);
 
@@ -168,7 +176,10 @@ function getHome() {
                 allEpisodes = this.fetchEpisodesByIds(recommendations);
             }
 
-            const platformVideos = [...allEpisodes, ...discoverBody.data]
+            const preferedAudioLanguage = getPreferedAudioLanguage();
+
+            const platformVideos = 
+                filterEpisodesByLanguage([...allEpisodes, ...discoverBody.data], preferedAudioLanguage)
                 .map(e => episodeToPlatformVideo(e))
                 .filter(Boolean);
 
@@ -1201,6 +1212,10 @@ function getPreferedAudioLanguage() {
     return local_settings.preferedAudioLanguageOptionIndex ? PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferedAudioLanguageOptionIndex - 1] : "ja-JP";
 }
 
+function getPreferedLocale() {
+    return local_settings.localeIndex ? LOCALE_OPTIONS[local_settings.localeIndex] : "en-US";
+}
+
 function decodeJWT(token) {
     // Validate token format
     if (!token || typeof token !== 'string') {
@@ -1280,11 +1295,74 @@ function replaceUrlPlaceholders(url, values) {
 function getLocalizationSettings() {
     // using same setting for know;
     return {
-        locale: getPreferedAudioLanguage(),
+        locale: getPreferedLocale(),
         preferred_audio_language: getPreferedAudioLanguage(),
         force_locale: getPreferedAudioLanguage()
     }
 }
 
+
+/**
+ * Filters episodes to keep preferred language version when available, with fallback support
+ * @param {Array<Object>} episodes - Array of episode objects with metadata
+ * @param {string} preferredLanguage - User's preferred language code (e.g., 'pt-PT')
+ * @returns {Array<Object>} Filtered episodes array
+ */
+function filterEpisodesByLanguage(episodes, preferredLanguage) {
+    // Validate preferred language format
+    if (!preferredLanguage.match(/^[a-z]{2}-[A-Z]{2}$/)) {
+        throw new Error('Invalid language code format. Expected format: xx-XX (e.g., pt-PT)');
+    }
+    
+    // Get base language for fallback (e.g., 'pt' from 'pt-PT')
+    const baseLanguage = preferredLanguage.split('-')[0];
+    
+    // Create a Map to group episodes by their identifier
+    const episodeGroups = new Map();
+    
+    // Group episodes by their identifier
+    for (const episode of episodes) {
+        const id = episode.episode_metadata?.identifier;
+        const language = episode.episode_metadata?.audio_locale;
+        
+        // Skip episodes with invalid metadata
+        if (!id || !language) {
+            console.warn('Episode missing required metadata (identifier or audio_locale)', episode);
+            continue;
+        }
+        
+        if (!episodeGroups.has(id)) {
+            episodeGroups.set(id, []);
+        }
+        episodeGroups.get(id).push(episode);
+    }
+    
+    // Filter the episodes based on language preference with fallback
+    const filteredEpisodes = [];
+    for (const group of episodeGroups.values()) {
+        if (group.length === 1) {
+            // If only one language version exists, keep it
+            filteredEpisodes.push(group[0]);
+        } else {
+            // First, try to find exact language match
+            let selectedVersion = group.find(
+                ep => ep.episode_metadata?.audio_locale === preferredLanguage
+            );
+            
+            // If exact match not found, try to find a version with same base language
+            if (!selectedVersion) {
+                selectedVersion = group.find(ep => {
+                    const episodeBaseLanguage = ep.episode_metadata?.audio_locale.split('-')[0];
+                    return episodeBaseLanguage === baseLanguage;
+                });
+            }
+            
+            // If no preferred or fallback version found, use first version
+            filteredEpisodes.push(selectedVersion || group[0]);
+        }
+    }
+    
+    return filteredEpisodes;
+}
 
 //#endregion
