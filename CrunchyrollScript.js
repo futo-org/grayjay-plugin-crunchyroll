@@ -38,13 +38,19 @@ let local_settings = {
     subtitlesLanguageOptionIndex: 0
 };
 /** State */
+
 let local_state = {
     headers: {},
     channels: {},
     isPremium: false,
     accountId: '',
-    is_anonymous_session: true
+    is_anonymous_session: true,
 };
+
+const runtime_requirements = [
+    !bridge.buildFlavor.includes('desktop')
+]
+
 let config = {};
 let UNAVAILABLE_OPTIONS = [];
 let PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES = {};
@@ -73,11 +79,25 @@ const local_source = {
     getUserSubscriptions,
     getUserPlaylists,
 };
+
 init_source(local_source);
+
 function init_source(local_source) {
-    for (const method_key of Object.keys(local_source)) {
-        source[method_key] = local_source[method_key];
+
+    if (runtime_requirements?.length && !runtime_requirements?.every(Boolean)) {
+        source.enable = () => {
+            bridge.toast('Current platform is not supported yet.');
+        }
+
+        source.getHome = () => {
+            return new ContentPager([], false);
+        }
+    } else {
+        for (const method_key of Object.keys(local_source)) {
+            source[method_key] = local_source[method_key];
+        }
     }
+
 }
 //#endregion
 //#region enable
