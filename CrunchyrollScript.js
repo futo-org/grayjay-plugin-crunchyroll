@@ -746,14 +746,6 @@ function getContentDetails(url) {
                             "Content-Type": "application/octet-stream"
                         }, false).body;
 
-                        if(bridge.isLoggedIn()) {
-                            const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${video_id}/${play_response.token}`, getHeaders(), false);
-    
-                            if (!deleteActiveStream.isOk) {
-                                bridge.toast(`Failed to delete active stream: ${deleteActiveStream.error}`);
-                            }
-                        }
-
                         return utility.fromBase64(response);
                     }
                 };
@@ -1431,6 +1423,40 @@ function savePreferences(){
             log('failed to set preferences')
         }
     }
+}
+
+source.getPlaybackTracker = function (url) {
+
+	// if (!_settings.submitActivity) {
+	// 	return null;
+	// }
+	
+	return new CrunchyrollPlaybackTracker(url);
+
+};
+
+
+class CrunchyrollPlaybackTracker extends PlaybackTracker {
+
+	constructor(url) {
+		super(5000);
+        this.url = url;
+	}
+
+	onInit(seconds) {}
+
+	onProgress(seconds, isPlaying) {}
+
+	onConcluded() {
+        if(bridge.isLoggedIn()) {
+            const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${video_id}/${play_response.token}`, getHeaders(), false);
+
+            if (!deleteActiveStream.isOk) {
+                bridge.toast(`Failed to delete active stream: ${deleteActiveStream.error}`);
+            }
+        }
+		
+	}
 }
 
 //#endregion
