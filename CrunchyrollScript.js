@@ -48,7 +48,7 @@ let local_state = {
 };
 
 const runtime_requirements = [
-    !bridge.buildFlavor.includes('desktop')
+    bridge.buildPlatform === "android"
 ]
 
 let config = {};
