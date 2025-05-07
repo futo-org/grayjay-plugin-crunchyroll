@@ -86,10 +86,10 @@ function init_source(local_source) {
 
     if (runtime_requirements?.length && !runtime_requirements?.every(Boolean)) {
         source.enable = () => {
-            bridge.toast('Current platform is not supported yet.');
         }
 
         source.getHome = () => {
+            bridge.toast('Current platform is not supported yet.');
             return new ContentPager([], false);
         }
     } else {
@@ -775,12 +775,21 @@ function getContentDetails(url) {
     const { likes, dislikes } = parseLikesAndDislikes(metadata.rating);
     const images = metadata?.images?.thumbnail?.[0] ?? [];
 
-    const seasonEpisodeIdPair = `S${metadata.episode_metadata.season_number}E${metadata.episode_metadata.episode_number}`;
+    const season = metadata?.episode_metadata?.season_number ? `S${metadata.episode_metadata.season_number}` : '';
+
+    const episodeNumber = metadata?.episode_metadata?.episode_number ? `E${metadata.episode_metadata.episode_number}` : '';
+
+    let name = [
+        `${season}${episodeNumber}`,
+        metadata?.title
+    ]
+    .filter(Boolean)
+    .join(' - ');
 
     const thumbnails = new Thumbnails(images.map((image) => new Thumbnail(image.source, image.height)));
     const result = new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
-        name: metadata.title ? `${seasonEpisodeIdPair} - ${metadata.title} `: seasonEpisodeIdPair,
+        name,
         thumbnails: thumbnails,
         author: new PlatformAuthorLink(
             new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), 
