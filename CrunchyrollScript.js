@@ -834,6 +834,12 @@ function getContentDetails(url) {
         return new ContentPager(seasonVideos, false);
     };
 
+    if (bridge.isLoggedIn()) {
+        result.getPlaybackTracker = function () {
+            return new CrunchyrollPlaybackTracker(local_state.accountId, video_id, play_response.token);
+        };
+    }
+
     return result;
 }
 //#endregion
@@ -1434,31 +1440,41 @@ function savePreferences() {
     }
 }
 
-source.getPlaybackTracker = function (url) {
-
-    // if (!_settings.submitActivity) {
-    // 	return null;
-    // }
-
-    return new CrunchyrollPlaybackTracker(url);
-
-};
-
-
 class CrunchyrollPlaybackTracker extends PlaybackTracker {
 
-    constructor(url) {
-        super(5000);
-        this.url = url;
+    constructor(account_id, video_id, play_response_token) {
+        super(30000);
+        this.video_id = video_id;
+        this.play_response_token = play_response_token;
+        this.account_id = account_id;
     }
 
-    onInit(seconds) { }
+    onInit(seconds) {
+    }
 
-    onProgress(seconds, isPlaying) { }
+    onProgress(seconds, isPlaying) {
+        if (bridge.isLoggedIn()) {
+
+            if (seconds) {
+
+                const headers = {
+                    ...getHeaders(),
+                    'Content-Type': 'application/json'
+                };
+
+                http.POST(
+                    `https://www.crunchyroll.com/content/v2/${this.account_id}/playheads?preferred_audio_language=${getPreferredAudioLanguage()}&locale=${getPreferedLocale()}`,
+                    JSON.stringify({ "content_id": this.video_id, "playhead": seconds }),
+                    headers,
+                    true
+                );
+            }
+        }
+    }
 
     onConcluded() {
         if (bridge.isLoggedIn()) {
-            const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${video_id}/${play_response.token}`, getHeaders(), false);
+            const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${this.video_id}/${this.play_response_token}`, getHeaders(), false);
 
             if (!deleteActiveStream.isOk) {
                 bridge.toast(`Failed to delete active stream: ${deleteActiveStream.error}`);

@@ -7,7 +7,7 @@
   "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
   "scriptUrl": "./CrunchyrollScript.js",
   "repositoryUrl": "https://gitlab.futo.org/videostreaming/plugins/crunchyroll",
-  "version": 11,
+  "version": 12,
   "iconUrl": "./CrunchyrollIcon.png",
   "id": "9bb33039-8580-48d4-9849-21319ae845a4",
   "scriptSignature": "",
@@ -154,6 +154,9 @@
     ],
     "7": [
       "Add setting to set preferred subtitle;"
+    ],
+    "12": [
+      "Fix playback tracking;"
     ]
   }
 }
