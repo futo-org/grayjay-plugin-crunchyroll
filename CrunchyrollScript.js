@@ -45,6 +45,7 @@ let local_state = {
     isPremium: false,
     accountId: '',
     is_anonymous_session: true,
+    deviceId: generateUUIDv4()
 };
 
 const runtime_requirements = [
@@ -374,7 +375,7 @@ function getChannelContents(url) {
         .GET(replaceUrlPlaceholders(OBJECT_SERIE_SEASONS_URL_TEMPLATE, { seriesId: seriesId, queryString: objectToUrlEncodedString(getLocalizationSettings()) }), getHeaders(), true);
 
     if (!seasonsResponse.isOk) {
-        throw new ScriptException("Failed to fetch serie season");
+        throw new ScriptException(`Failed to fetch serie season: ${seasonsResponse.code}`);
     }
 
     const seasonIdList = JSON.parse(seasonsResponse.body)?.data?.toReversed()?.map(e => e.id) ?? [];
@@ -1174,8 +1175,13 @@ function assToVtt(assContent) {
 
 function get_bearer() {
 
-    const html = http.GET(BASE_URL, { 'User-Agent': config.authentication.userAgent }, true).body;
-    const match_result = html.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
+    const res = http.GET(BASE_URL, { 'User-Agent': config.authentication.userAgent }, true);
+
+    if (!res.isOk) {
+        throw new ScriptException(`Failed to fetch html. Status: ${res.code}`);
+    }
+
+    const match_result = res.body.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
     if (match_result === null || match_result[1] === undefined) {
         throw new ScriptException("regex error");
     }
@@ -1188,18 +1194,39 @@ function get_bearer() {
     let response;
 
     if (bridge.isLoggedIn()) {
-        response = JSON.parse(http.POST(AUTH_TOKEN_URL, "grant_type=etp_rt_cookie", {
+
+        const body = objectToUrlEncodedString({
+            device_id: local_state.deviceId,
+            device_type: 'Firefox on Windows',
+            grant_type: 'etp_rt_cookie'
+        });
+
+        const authRes = http.POST(AUTH_TOKEN_URL, body, {
             Authorization: `Basic ${auth}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-        }, true).body);
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }, true);
+
+        if (!authRes.isOk) {
+            bridge.toast(authRes.body);
+            throw new ScriptException(`Failed to fetch auth token. Status: ${authRes.code}`);
+        }
+
+        response = JSON.parse(authRes.body);
         // 5 minutes before the token expires
     }
     else {
-        response = JSON.parse(http.POST(AUTH_TOKEN_URL, "grant_type=client_id", {
+
+        const unauthRes = http.POST(AUTH_TOKEN_URL, "grant_type=client_id", {
             Authorization: `Basic ${auth}`,
             "Content-Type": "application/x-www-form-urlencoded",
             "Etp-Anonymous-Id": "6ba29c34-469b-4597-9d0d-9bbc672fb2d7"
-        }, false).body);
+        }, true);
+
+        if (!unauthRes.isOk) {
+            throw new ScriptException(`Failed to fetch auth token. Status: ${unauthRes.code}`);
+        }
+
+        response = JSON.parse(unauthRes.body);
         // 1h before the token expires
     }
 
@@ -1211,6 +1238,10 @@ function get_bearer() {
 
 function renewSession() {
     const { access_token, access_token_expires_at } = get_bearer();
+
+    if (!access_token) {
+        throw new LoginRequiredException("Failed to renew session");
+    }
 
     local_state.access_token_expires_at = access_token_expires_at;
     local_state.headers = {
@@ -1238,6 +1269,8 @@ function getHeaders() {
     if (!validAuthSession || (local_state.is_anonymous_session && bridge.isLoggedIn())) {
         renewSession();
     }
+
+    local_state.headers['User-Agent'] = config.authentication.userAgent;
 
     return local_state.headers;
 }
@@ -1337,6 +1370,14 @@ function getLocalizationSettings() {
         preferred_audio_language: getPreferredAudioLanguage(),
         force_locale: getPreferredAudioLanguage()
     }
+}
+
+function generateUUIDv4() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
 }
 
 
