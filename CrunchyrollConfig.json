@@ -7,7 +7,7 @@
   "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
   "scriptUrl": "./CrunchyrollScript.js",
   "repositoryUrl": "https://gitlab.futo.org/videostreaming/plugins/crunchyroll",
-  "version": 13,
+  "version": 14,
   "iconUrl": "./CrunchyrollIcon.png",
   "id": "9bb33039-8580-48d4-9849-21319ae845a4",
   "scriptSignature": "",
@@ -84,7 +84,7 @@
       "type": "Dropdown",
       "default": "0",
       "options": [
-        "Original",
+        "ja-JP - 日本語",
         "en-US - English",
         "en-IN - English (India)",
         "id-ID - Bahasa Indonesia",
@@ -160,6 +160,9 @@
     ],
     "13": [
       "Fix authenticated session issue;"
+    ],
+    "14": [
+      "Fix: error when description contains alternate streams in Japanese;"
     ]
   }
 }

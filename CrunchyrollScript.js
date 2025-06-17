@@ -754,15 +754,22 @@ function getContentDetails(url) {
         });
     });
 
-    const dubbedVersions = play_response.versions?.filter(v => !v.original && (!v.is_premium_only || local_state.isPremium));
+    const alternateVersions = play_response.versions?.filter(v => v.guid !== video_id && (!v.is_premium_only || local_state.isPremium));
 
-    if (dubbedVersions?.length) {
+    if (alternateVersions?.length) {
         let alternateStreamsLabel = '<p>Alternate Streams dubs:</p>';
 
-        play_response.versions.forEach((version) => {
-            if (!version.original) {
+        alternateVersions.forEach((version) => {
+            
+            try {
                 const versionUrl = `${BASE_URL}/watch/${version.guid}`;
-                alternateStreamsLabel += `<p><a href="${versionUrl}">${PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES[version.audio_locale].langName} - ${version.audio_locale} dubbed Version</a></p>`;
+                const langName = PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES[version.audio_locale]?.langName;
+                const langAudioLocale = version?.audio_locale ?? "";
+                const displayLang = [langName, langAudioLocale].filter(Boolean).join(' - ');
+                alternateStreamsLabel += `<p><a href="${versionUrl}">${displayLang} ${version.original ? 'original' : 'dubbed'} version</a></p>`;
+            } catch (error) {
+                log(`failed to add alternate stream to description  [${version?.audio_locale ?? ""}]`);
+                log(error);
             }
         });
 
@@ -1275,8 +1282,7 @@ function getHeaders() {
     return local_state.headers;
 }
 function getPreferredAudioLanguage() {
-    // -1 Subtraction is done to account for the "Original" option and ignore it
-    return local_settings.preferredAudioLanguageOptionIndex ? PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferredAudioLanguageOptionIndex - 1] : "ja-JP";
+    return PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferredAudioLanguageOptionIndex];
 }
 
 function getPreferredSubtitleLanguage() {
