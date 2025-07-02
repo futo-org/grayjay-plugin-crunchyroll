@@ -19,8 +19,8 @@ const ACCOUNT_INFO_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{ac
 const SUBSCRIPTIONS_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{account_id}/custom-lists/{list_id}?{queryString}";
 const PLAY_URL_TEMPLATE = "https://cr-play-service.prd.crunchyrollsvc.com/v1/{video_id}/web/firefox/play";
 
-const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]+)(?:\/.*)?$/;
-const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/series\/([A-Z0-9]+)(?:\/|$)/;
+const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/(?:[a-z]{2}-[a-z]{2}\/)?watch\/([A-Z0-9]+)(?:\/.*)?$/;
+const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/(?:[a-z]{2}-[a-z]{2}\/)?series\/([A-Z0-9]+)(?:\/|$)/;
 const REGEX_INTERNAL_PLAYLIST_URL = /^https:\/\/grayjay\.internal\/Crunchyroll\/playlist\/([A-Z0-9]+)(?:\?.*)?$/;
 
 const ITEMS_PER_PAGE = 100;
