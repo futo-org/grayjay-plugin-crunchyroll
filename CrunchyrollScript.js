@@ -1,10 +1,28 @@
 //#region constants
 const PLATFORM = "Crunchyroll";
 const BASE_URL = "https://www.crunchyroll.com";
+const PREMIUM_URL = "https://www.crunchyroll.com/premium";
+const AUTH_TOKEN_URL = "https://www.crunchyroll.com/auth/v1/token";
+const SERIES_URL_PREFIX = "https://www.crunchyroll.com/series/";
+const WIDEVINE_LICENSE_URL = "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine?specConform=true";
+const USER_PROFILE_API_URL = "https://www.crunchyroll.com/accounts/v1/me/profile";
+
+const EXPLORE_URL_TEMPLATE = "https://www.crunchyroll.com/content/v2/discover/browse?{query}";
+const LOCALE_URL_TEMPLATE = "https://www.crunchyroll.com/f/v1/home?locale={locale}";
+const EPISODE_URL_TEMPLATE = "https://www.crunchyroll.com/watch/{episode_id}/{episode_slug_title}";
+const SEARCH_TEMPLATE_URL = "https://www.crunchyroll.com/content/v2/discover/search?{queryString}";
+const OBJECT_WITH_RATINGS_URL_TEMPLATE = "https://www.crunchyroll.com/content/v2/cms/objects/{objectId}?ratings=true&{queryString}";
+const OBJECT_SERIE_SEASONS_URL_TEMPLATE = "https://www.crunchyroll.com/content/v2/cms/series/{seriesId}/seasons?{queryString}";
+const OBJECT_SEASON_EPISODES_URL_TEMPLATE = "https://www.crunchyroll.com/content/v2/cms/seasons/{seasonId}/episodes?{queryString}";
+const VIDEO_SKIP_EVENTS_URL_TEMPLATE = "https://static.crunchyroll.com/skip-events/production/{videoId}.json";
+const ACCOUNT_INFO_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{account_id}/custom-lists?{queryString}";
+const SUBSCRIPTIONS_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{account_id}/custom-lists/{list_id}?{queryString}";
+const PLAY_URL_TEMPLATE = "https://cr-play-service.prd.crunchyrollsvc.com/v1/{video_id}/web/firefox/play";
+
 const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]+)(?:\/.*)?$/;
 const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/series\/([A-Z0-9]+)(?:\/|$)/;
-const SERIES_URL_PREFIX = "https://www.crunchyroll.com/series/";
 const REGEX_INTERNAL_PLAYLIST_URL = /^https:\/\/grayjay\.internal\/Crunchyroll\/playlist\/([A-Z0-9]+)(?:\?.*)?$/;
+
 const ITEMS_PER_PAGE = 100;
 // const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0" as const
 // set missing constants
@@ -15,19 +33,31 @@ Type.Feed.Playlists = "PLAYLISTS";
 Type.Feed.Albums = "ALBUMS";
 let local_settings = {
     premiumContentUnavailableIndex: 0,
-    preferedAudioLanguageOptionIndex: 0
+    localeIndex: 0,
+    preferredAudioLanguageOptionIndex: 0,
+    subtitlesLanguageOptionIndex: 0
 };
 /** State */
+
 let local_state = {
     headers: {},
     channels: {},
     isPremium: false,
     accountId: '',
+    is_anonymous_session: true,
+    deviceId: generateUUIDv4()
 };
+
+const runtime_requirements = [
+    bridge.buildPlatform === "android"
+]
+
 let config = {};
 let UNAVAILABLE_OPTIONS = [];
 let PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES = {};
 let PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS = [];
+let LOCALE_OPTIONS = [];
+let SUBTITLE_OPTIONS = [];
 //#endregion
 //#region source methods
 const local_source = {
@@ -50,11 +80,25 @@ const local_source = {
     getUserSubscriptions,
     getUserPlaylists,
 };
+
 init_source(local_source);
+
 function init_source(local_source) {
-    for (const method_key of Object.keys(local_source)) {
-        source[method_key] = local_source[method_key];
+
+    if (runtime_requirements?.length && !runtime_requirements?.every(Boolean)) {
+        source.enable = () => {
+        }
+
+        source.getHome = () => {
+            bridge.toast('Current platform is not supported yet.');
+            return new ContentPager([], false);
+        }
+    } else {
+        for (const method_key of Object.keys(local_source)) {
+            source[method_key] = local_source[method_key];
+        }
     }
+
 }
 //#endregion
 //#region enable
@@ -63,7 +107,7 @@ function enable(conf, settings, saved_state) {
     local_settings = settings;
     UNAVAILABLE_OPTIONS = loadOptionsForSetting("premiumContentUnavailableIndex");
 
-    PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES = loadOptionsForSetting("preferedAudioLanguageOptionIndex")
+    PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES = loadOptionsForSetting("preferredAudioLanguageOptionIndex")
         .filter(option => option !== "Original")
         .reduce((acc, option) => {
             const [langCode, langName] = option.split(" - ");
@@ -71,11 +115,24 @@ function enable(conf, settings, saved_state) {
             return acc;
         }, {});
 
+    LOCALE_OPTIONS = loadOptionsForSetting("localeIndex")
+        .map(option => {
+            const [langCode] = option.split(" - ");
+            return langCode;
+        });
+
+    SUBTITLE_OPTIONS = loadOptionsForSetting("subtitlesLanguageOptionIndex")
+        .filter(option => option !== "None")
+        .map(option => {
+            const [langCode] = option.split(" - ");
+            return langCode;
+        });
+
     PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS = Object.keys(PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES);
 
     if (IS_TESTING) {
         local_settings.premiumContentUnavailableIndex = 0; // As locked content
-        local_settings.preferedAudioLanguageOptionIndex = 0; // Original
+        local_settings.preferredAudioLanguageOptionIndex = 0; // Original
     }
 
     if (saved_state) {
@@ -83,6 +140,11 @@ function enable(conf, settings, saved_state) {
     }
 
     getHeaders();
+
+    //set settings
+    savePreferences();
+
+
 }
 //#endregion
 function disable() {
@@ -106,25 +168,25 @@ function getHome() {
         }
 
         nextPage() {
-            const locale = local_settings?.preferLocale ?? "en-US";
+
+            const local_settings = getLocalizationSettings();
             const start = this.context.offset || 0;
             const isFirstPage = start === 0;
 
             const query = objectToUrlEncodedString({
+                ...local_settings,
                 type: "episode",
-                preferred_audio_language: getPreferedAudioLanguage(),
                 n: ITEMS_PER_PAGE,
                 start,
-                locale,
                 sort_by: "newly_added",
                 ratings: true,
             });
 
             let batchRequests = http.batch();
-            batchRequests.GET(`${BASE_URL}/content/v2/discover/browse?${query}`, getHeaders());
+            batchRequests.GET(replaceUrlPlaceholders(EXPLORE_URL_TEMPLATE, { query }), getHeaders());
 
             if (isFirstPage) {
-                batchRequests.GET(`${BASE_URL}/f/v1/home?locale=${locale}`, getHeaders(), true);
+                batchRequests.GET(replaceUrlPlaceholders(LOCALE_URL_TEMPLATE, { locale: local_settings.locale }), getHeaders(), true);
             }
 
             const responses = batchRequests.execute();
@@ -150,9 +212,12 @@ function getHome() {
                 allEpisodes = this.fetchEpisodesByIds(recommendations);
             }
 
-            const platformVideos = [...allEpisodes, ...discoverBody.data]
-                .map(e => episodeToPlatformVideo(e))
-                .filter(e => e);
+            const preferedAudioLanguage = getPreferredAudioLanguage();
+
+            const platformVideos =
+                filterEpisodesByLanguage([...allEpisodes, ...discoverBody.data], preferedAudioLanguage)
+                    .map(e => episodeToPlatformVideo(e))
+                    .filter(Boolean);
 
             const offset = this.context.offset + ITEMS_PER_PAGE;
 
@@ -163,23 +228,44 @@ function getHome() {
             });
         }
 
+        /**
+         * Extracts unique free-to-watch URLs from the provided homeBody object
+         * @param {Object} homeBody - The homeBody object containing children with link properties
+         * @returns {Set<string>} A Set of unique free-to-watch URLs
+         */
         extractFreeToWatchUrls(homeBody) {
-            const freeToWatch = homeBody?.children
-                .filter(i => (
-                    i.props.analyticsId.toLowerCase().includes("sampler") ||
-                    i.props.analyticsId.toLowerCase().includes("free")
-                ) && i.props.link)
-                .map(i => i.props.link) ?? [];
+            // Early return if homeBody or homeBody.children is null/undefined
+            if (!homeBody?.children) {
+                return new Set();
+            }
 
-            const freeToWatchFirstSeasonsUrl = homeBody?.children.find(
-                i => i.props.analyticsId === "Curation_Collections/Editorial/Free-to-Watch_First_Seasons"
-            )?.props?.link ?? '';
+            // Extract generic free/sampler URLs
+            const freeToWatch = homeBody.children
+                .filter(item => {
+                    // Check if analyticsId exists before calling toLowerCase()
+                    const analyticsId = item?.props?.analyticsId;
+                    return analyticsId &&
+                        (analyticsId.toLowerCase().includes("sampler") ||
+                            analyticsId.toLowerCase().includes("free")) &&
+                        item.props.link;
+                })
+                .map(item => item.props.link);
 
-            const newEpisodesSeasonalSamplerUrl = homeBody?.children.find(
-                i => i.props.analyticsId.includes("_Seasonal_Sampler")
-            )?.props?.link ?? '';
+            // Extract specific first seasons URL
+            const freeToWatchFirstSeasonsUrl = homeBody.children.find(
+                item => item?.props?.analyticsId === "Curation_Collections/Editorial/Free-to-Watch_First_Seasons"
+            )?.props?.link || '';
 
-            return new Set([...freeToWatch, freeToWatchFirstSeasonsUrl, newEpisodesSeasonalSamplerUrl]);
+            // Extract seasonal sampler URL
+            const newEpisodesSeasonalSamplerUrl = homeBody.children.find(
+                item => item?.props?.analyticsId && item.props.analyticsId.includes("_Seasonal_Sampler")
+            )?.props?.link || '';
+
+            // Combine all URLs and filter out empty strings
+            const allUrls = [...freeToWatch, freeToWatchFirstSeasonsUrl, newEpisodesSeasonalSamplerUrl]
+                .filter(Boolean);
+            // Return a Set of unique URLs
+            return new Set(allUrls);
         }
 
         fetchFreeToWatchContent(urlSet) {
@@ -196,7 +282,7 @@ function getHome() {
             let recommendationsSet = new Set();
 
             freeToWatchResponses.forEach(response => {
-                
+
                 if (response.isOk) {
                     const freeToWatchBody = JSON.parse(response.body);
                     const freeToWatchEpisodes = freeToWatchBody?.recommendations?.map(i => i.contentItemId) ?? [];
@@ -213,7 +299,7 @@ function getHome() {
             if (!ids.length) return [];
 
             const episodeResponse = http.GET(
-                `${BASE_URL}/content/v2/cms/objects/${ids.join(",")}?ratings=true`,
+                replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: ids.join(","), queryString: getLocationQueryString() }),
                 getHeaders(),
                 true
             );
@@ -284,16 +370,12 @@ function getChannelContents(url) {
         throw new ScriptException("Invalid channel URL");
     }
 
-    const queryString = objectToUrlEncodedString({
-        locale: "en-US",
-        preferred_audio_language: getPreferedAudioLanguage(),
-    });
 
     const seasonsResponse = http
-        .GET(`https://www.crunchyroll.com/content/v2/cms/series/${seriesId}/seasons?${queryString}`, getHeaders(), true);
+        .GET(replaceUrlPlaceholders(OBJECT_SERIE_SEASONS_URL_TEMPLATE, { seriesId: seriesId, queryString: objectToUrlEncodedString(getLocalizationSettings()) }), getHeaders(), true);
 
     if (!seasonsResponse.isOk) {
-        throw new ScriptException("Failed to fetch serie season");
+        throw new ScriptException(`Failed to fetch serie season: ${seasonsResponse.code}`);
     }
 
     const seasonIdList = JSON.parse(seasonsResponse.body)?.data?.toReversed()?.map(e => e.id) ?? [];
@@ -338,8 +420,8 @@ function getChannelPlaylists(url) {
 
     const [serieInfoResponse, seasonsResponse] = http
         .batch()
-        .GET(`https://www.crunchyroll.com/content/v2/cms/objects/${seriesId}?ratings=true`, getHeaders(), false)
-        .GET(`https://www.crunchyroll.com/content/v2/cms/series/${seriesId}/seasons?force_locale=&locale=en-US`, getHeaders(), true)
+        .GET(replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: seriesId, queryString: getLocationQueryString() }), getHeaders(), false)
+        .GET(replaceUrlPlaceholders(OBJECT_SERIE_SEASONS_URL_TEMPLATE, { seriesId: seriesId, queryString: objectToUrlEncodedString(getLocalizationSettings()) }), getHeaders(), true)
         .execute();
 
     if (!serieInfoResponse.isOk) {
@@ -399,12 +481,7 @@ function getSeasonEpisodes(seasonId, opts = { isPlaylist: true, filterCb: null }
         opts.filterCb = () => true;
     }
 
-    const queryString = objectToUrlEncodedString({
-        locale: "en-US",
-        preferred_audio_language: getPreferedAudioLanguage(),
-    });
-
-    const seasonEpisodes = http.GET(`https://www.crunchyroll.com/content/v2/cms/seasons/${seasonId}/episodes?${queryString}`, getHeaders(), true);
+    const seasonEpisodes = http.GET(replaceUrlPlaceholders(OBJECT_SEASON_EPISODES_URL_TEMPLATE, { seasonId, queryString: objectToUrlEncodedString(getLocalizationSettings()) }), getHeaders(), true);
 
     if (!seasonEpisodes.isOk) {
         throw new ScriptException("Failed to fetch season episodes");
@@ -415,7 +492,7 @@ function getSeasonEpisodes(seasonId, opts = { isPlaylist: true, filterCb: null }
     return episodes
         .filter(opts.filterCb)
         .map(e => episodeToPlatformVideo(e, opts))
-        .filter(e => e);
+        .filter(Boolean);
 }
 
 source.getPlaylist = function (url) {
@@ -424,8 +501,8 @@ source.getPlaylist = function (url) {
         throw new ScriptException(`Invalid playlist URL: ${url}`);
     }
 
-    if(url.startsWith("crunchyroll:playlist")) {
-        
+    if (url.startsWith("crunchyroll:playlist")) {
+
         const playlistId = url.split(":")[2];
 
         const itemsPerPage = 10;
@@ -436,22 +513,22 @@ source.getPlaylist = function (url) {
         }
 
         function getReqUrl(playlistId, start = 0) {
-            return `https://www.crunchyroll.com/content/v2/${urlPaths[playlistId]}${local_state.accountId}/${playlistId}?order=desc&n=${itemsPerPage}&start=${start}&preferred_audio_language=en-US&locale=en-US`;
+            return `https://www.crunchyroll.com/content/v2/${urlPaths[playlistId]}${local_state.accountId}/${playlistId}?order=desc&n=${itemsPerPage}&start=${start}&preferred_audio_language=ja-JP&locale=ja-JP`;
         }
 
         const reqUrl = getReqUrl(playlistId);
-        
-        
+
+
         const response = http.GET(reqUrl, getHeaders(), true);
-        
+
         if (response.isOk) {
 
             let episodeIds = [];
-            
+
             const data = JSON.parse(response.body);
-            
+
             episodeIds = data.data.map(e => e.panel.id);
-            
+
             const total = data.total;
             const pendingPages = Math.ceil(total / itemsPerPage) - 1;
 
@@ -459,9 +536,9 @@ source.getPlaylist = function (url) {
 
             Array
                 .from({ length: pendingPages }, (_, i) => {
-                    return getReqUrl(playlistId, (i+1) * itemsPerPage);
+                    return getReqUrl(playlistId, (i + 1) * itemsPerPage);
                 })
-                .forEach(url => { 
+                .forEach(url => {
                     batchRequests.GET(url, getHeaders(), true);
                 });
 
@@ -475,7 +552,7 @@ source.getPlaylist = function (url) {
                 });
 
             const episodeListResponse = http.GET(
-                `${BASE_URL}/content/v2/cms/objects/${episodeIds.join(",")}?ratings=true`,
+                replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: episodeIds.join(","), queryString: getLocationQueryString() }),
                 getHeaders(),
                 true
             );
@@ -484,7 +561,7 @@ source.getPlaylist = function (url) {
 
             if (episodeListResponse.isOk) {
                 const episodes = JSON.parse(episodeListResponse.body)?.data ?? [];
-                contentList = episodes.map(e => episodeToPlatformVideo(e, {isPlaylist: true})).filter(e => e);
+                contentList = episodes.map(e => episodeToPlatformVideo(e, { isPlaylist: true })).filter(Boolean);
             }
 
             return new PlatformPlaylistDetails({
@@ -501,7 +578,7 @@ source.getPlaylist = function (url) {
                 contents: new VideoPager(contentList),
                 shareUrl: '',
             });
-            
+
         }
 
     } else {
@@ -536,7 +613,7 @@ source.getPlaylist = function (url) {
             shareUrl: '',
         });
     }
-    
+
 };
 
 //#endregion
@@ -555,8 +632,8 @@ function getContentRecommendations(url, nextEpisodeResponseInitialData) {
     nextEpisodeResponse = nextEpisodeResponseInitialData;
 
     const nextEpisode = (JSON.parse(nextEpisodeResponse.body)?.data ?? [])
-    .map(episodeToPlatformVideo)
-    .filter(e => e);
+        .map(episodeToPlatformVideo)
+        .filter(Boolean);
 
     if (!nextEpisode?.length) {
         return new ContentPager([], false);
@@ -569,7 +646,7 @@ function getContentChapters(url) {
 
     const videoId = url.match(CONTENT_DETAIL_REGEX)?.[1];
 
-    const response = http.GET(`https://static.crunchyroll.com/skip-events/production/${videoId}.json`, {}, false);
+    const response = http.GET(replaceUrlPlaceholders(VIDEO_SKIP_EVENTS_URL_TEMPLATE, { videoId }), {}, false);
 
     if (!response.isOk) {
         throw new ScriptException("Failed to fetch content chapters");
@@ -598,8 +675,8 @@ function getContentDetails(url) {
     }
     const responses = http
         .batch()
-        .GET(`https://www.crunchyroll.com/content/v2/cms/objects/${video_id}?ratings=true`, getHeaders(), false)
-        .GET(`https://cr-play-service.prd.crunchyrollsvc.com/v1/${video_id}/web/firefox/play`, getHeaders(), false)
+        .GET(replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: video_id, queryString: getLocationQueryString() }), getHeaders(), false)
+        .GET(replaceUrlPlaceholders(PLAY_URL_TEMPLATE, { video_id: video_id }), getHeaders(), false)
         .execute();
     if (responses[0] === undefined || responses[1] === undefined) {
         throw new ScriptException("unreachable");
@@ -656,7 +733,7 @@ function getContentDetails(url) {
                 // headers for the manifest
                 headers: getHeaders(),
             },
-            licenseUri: "https://cr-license-proxy.prd.crunchyrollsvc.com/v1/license/widevine?specConform=true",
+            licenseUri: WIDEVINE_LICENSE_URL,
             getLicenseRequestExecutor: () => {
                 return {
                     executeRequest: (url, _headers, _method, license_request_data) => {
@@ -670,14 +747,6 @@ function getContentDetails(url) {
                             "Content-Type": "application/octet-stream"
                         }, false).body;
 
-                        if(bridge.isLoggedIn()) {
-                            const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${video_id}/${play_response.token}`, getHeaders(), false);
-    
-                            if (!deleteActiveStream.isOk) {
-                                bridge.toast(`Failed to delete active stream: ${deleteActiveStream.error}`);
-                            }
-                        }
-
                         return utility.fromBase64(response);
                     }
                 };
@@ -685,21 +754,28 @@ function getContentDetails(url) {
         });
     });
 
-    const dubbedVersions = play_response.versions?.filter(v => !v.original && (!v.is_premium_only || local_state.isPremium));
+    const alternateVersions = play_response.versions?.filter(v => v.guid !== video_id && (!v.is_premium_only || local_state.isPremium));
 
-    if (dubbedVersions?.length) {
+    if (alternateVersions?.length) {
         let alternateStreamsLabel = '<p>Alternate Streams dubs:</p>';
 
-        play_response.versions.forEach((version) => {
-            if (!version.original) {
+        alternateVersions.forEach((version) => {
+            
+            try {
                 const versionUrl = `${BASE_URL}/watch/${version.guid}`;
-                alternateStreamsLabel += `<p><a href="${versionUrl}">${PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES[version.audio_locale].langName} - ${version.audio_locale} dubbed Version</a></p>`;
+                const langName = PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES[version.audio_locale]?.langName;
+                const langAudioLocale = version?.audio_locale ?? "";
+                const displayLang = [langName, langAudioLocale].filter(Boolean).join(' - ');
+                alternateStreamsLabel += `<p><a href="${versionUrl}">${displayLang} ${version.original ? 'original' : 'dubbed'} version</a></p>`;
+            } catch (error) {
+                log(`failed to add alternate stream to description  [${version?.audio_locale ?? ""}]`);
+                log(error);
             }
         });
 
         metadata.description += alternateStreamsLabel;
     }
-    
+
     const serieUrl = `${SERIES_URL_PREFIX}${metadata.episode_metadata.series_id}/${metadata.episode_metadata.series_slug_title}`;
 
     const channel = getChannel(serieUrl);
@@ -707,16 +783,25 @@ function getContentDetails(url) {
     const { likes, dislikes } = parseLikesAndDislikes(metadata.rating);
     const images = metadata?.images?.thumbnail?.[0] ?? [];
 
-    const seasonEpisodeIdPair = `S${metadata.episode_metadata.season_number}E${metadata.episode_metadata.episode_number}`;
+    const season = metadata?.episode_metadata?.season_number ? `S${metadata.episode_metadata.season_number}` : '';
+
+    const episodeNumber = metadata?.episode_metadata?.episode_number ? `E${metadata.episode_metadata.episode_number}` : '';
+
+    let name = [
+        `${season}${episodeNumber}`,
+        metadata?.title
+    ]
+        .filter(Boolean)
+        .join(' - ');
 
     const thumbnails = new Thumbnails(images.map((image) => new Thumbnail(image.source, image.height)));
     const result = new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, metadata.id, plugin.config.id),
-        name: metadata.title ? `${seasonEpisodeIdPair} - ${metadata.title} `: seasonEpisodeIdPair,
+        name,
         thumbnails: thumbnails,
         author: new PlatformAuthorLink(
-            new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id), 
-            metadata.episode_metadata.series_title, 
+            new PlatformID(PLATFORM, metadata.episode_metadata.series_id, plugin.config.id),
+            metadata.episode_metadata.series_title,
             serieUrl,
             channel.thumbnail
         ),
@@ -757,6 +842,12 @@ function getContentDetails(url) {
         return new ContentPager(seasonVideos, false);
     };
 
+    if (bridge.isLoggedIn()) {
+        result.getPlaybackTracker = function () {
+            return new CrunchyrollPlaybackTracker(local_state.accountId, video_id, play_response.token);
+        };
+    }
+
     return result;
 }
 //#endregion
@@ -775,6 +866,11 @@ function isPlaylistUrl(url) {
 function isChannelUrl(url) {
     return SERIES_REGEX.test(url);
 }
+
+function getLocationQueryString() {
+    return objectToUrlEncodedString(getLocalizationSettings());
+}
+
 //#endregion
 //#region other
 function getUserSubscriptions() {
@@ -782,40 +878,40 @@ function getUserSubscriptions() {
     const subscriptions = [];
 
     try {
-        const response = http.GET(`https://www.crunchyroll.com/content/v2/${local_state.accountId}/custom-lists?preferred_audio_language=en-US&locale=en-US`, getHeaders(), true);
-    
+        const response = http.GET(replaceUrlPlaceholders(ACCOUNT_INFO_URL_PLACEHOLDER, { account_id: local_state.accountId, queryString: getLocationQueryString() }), getHeaders(), true);
+
         if (response.isOk) {
-            
+
             const listsIds = JSON.parse(response.body)?.data?.map(l => l.list_id) ?? [];
-    
-            if(listsIds.length) {
+
+            if (listsIds.length) {
                 const batchRequests = http.batch();
-    
+
                 listsIds.forEach(listId => {
-                    batchRequests.GET(`https://www.crunchyroll.com/content/v2/${local_state.accountId}/custom-lists/${listId}?preferred_audio_language=en-US&locale=en-US`, getHeaders(), true);
+                    batchRequests.GET(replaceUrlPlaceholders(SUBSCRIPTIONS_URL_PLACEHOLDER, { account_id: local_state.accountId, list_id: listId, queryString: getLocationQueryString() }), getHeaders(), true);
                 });
-        
+
                 batchRequests
                     .execute()
                     .filter(r => r.isOk)
                     .map(r => JSON.parse(r.body))
                     .forEach(list => {
-                    list.data.forEach(item => {
-                        subscriptions.push(`${SERIES_URL_PREFIX}${item.id}/${item.panel.slug_title}`);
+                        list.data.forEach(item => {
+                            subscriptions.push(`${SERIES_URL_PREFIX}${item.id}/${item.panel.slug_title}`);
+                        });
                     });
-                });
             }
         }
-    } catch(e) {
+    } catch (e) {
         log(e);
         bridge.toast("Failed to fetch subscriptions");
     }
-    
+
     return subscriptions;
 }
 
 function getUserPlaylists() {
-    
+
     return [
         'crunchyroll:playlist:watchlist',
         'crunchyroll:playlist:watch-history',
@@ -824,42 +920,68 @@ function getUserPlaylists() {
 //#endregion
 //#region utilities
 function genericSearch(query, type, order, filters) {
-    log(query, order, filters, type);
-    const searchQuery = query.split(" ").join("+");
 
-    const queryString = objectToUrlEncodedString({
-        q: searchQuery,
-        type,
-        ratings: true,
-        locale: "en-US",
-        preferred_audio_language: getPreferedAudioLanguage(),
-    });
+    class GenericSearchPager extends VideoPager {
 
-    const response = http.GET(`https://www.crunchyroll.com/content/v2/discover/search?${queryString}`, getHeaders(), true);
-    const contentList = [];
-    if (response.isOk) {
-        const searchResults = JSON.parse(response.body)?.data ?? [];
-        searchResults.forEach((searchResult) => {
-            // handle other types in the future
-            if (searchResult.type === "episode") {
-                searchResult.items
-                    .forEach((metadata) => {
-                        const content = episodeToPlatformVideo(metadata);
-                        if(content) {
-                            contentList.push(content);
-                        }
-                    });
+        constructor({
+            videos = [],
+            hasMore = true,
+            context = { start: null },
+        } = {}) {
+            super(videos, hasMore, context);
+        }
+
+        nextPage() {
+            log(query, order, filters, type);
+            const searchQuery = query.split(" ").join("+");
+
+            const start = this?.context?.start;
+
+            const queryString = objectToUrlEncodedString({
+                ...getLocalizationSettings(),
+                q: searchQuery,
+                type,
+                ratings: true,
+                n: ITEMS_PER_PAGE,
+                start
+            });
+
+
+            const response = http.GET(replaceUrlPlaceholders(SEARCH_TEMPLATE_URL, { queryString }), getHeaders(), true);
+
+            const contentList = [];
+            if (response.isOk) {
+                const searchResults = JSON.parse(response.body)?.data ?? [];
+                searchResults.forEach((searchResult) => {
+                    // handle other types in the future
+                    if (searchResult.type === "episode") {
+                        searchResult.items
+                            .forEach((metadata) => {
+                                const content = episodeToPlatformVideo(metadata);
+                                if (content) {
+                                    contentList.push(content);
+                                }
+                            });
+                    }
+
+                    if (searchResult.type === "series") {
+                        searchResult.items
+                            .forEach((metadata) => {
+                                contentList.push(serieToPlatformChannel(metadata));
+                            });
+                    }
+                });
             }
 
-            if (searchResult.type === "series") {
-                searchResult.items
-                    .forEach((metadata) => {
-                        contentList.push(serieToPlatformChannel(metadata));
-                    });
-            }
-        });
+            return new GenericSearchPager({
+                videos: contentList,
+                hasMore: contentList.length > 0,
+                context: { start: start + ITEMS_PER_PAGE },
+            });
+        }
     }
-    return new ContentPager(contentList, false);
+
+    return new GenericSearchPager().nextPage();
 }
 
 function serieToPlatformChannel(serie) {
@@ -887,7 +1009,7 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
 
     const t = episode?.images?.thumbnail?.[0]?.map((image) => new Thumbnail(image.source, image.height)) ?? [];
     const thumbnails = new Thumbnails(t);
-    const url = `https://www.crunchyroll.com/watch/${episode.id}/${episode.slug_title}`;
+    const url = replaceUrlPlaceholders(EPISODE_URL_TEMPLATE, { episode_id: episode.id, episode_slug_title: episode.slug_title });
 
     const isPremiumOnly = episode?.episode_metadata?.availability_status === 'premium_only';
     const isLoggedIn = bridge.isLoggedIn();
@@ -926,7 +1048,7 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
     }
     else if (premiumContentUnavailableOption === "As locked Content") {
         const lockDescription = isLoggedIn ? 'This content is only available to premium users' : 'Login with a premium account to watch';
-        const unlockUrl = isLoggedIn ? "https://www.crunchyroll.com/premium" : "";
+        const unlockUrl = isLoggedIn ? PREMIUM_URL : "";
         return new PlatformLockedContent({
             id: new PlatformID(PLATFORM, episode.id, plugin.config.id),
             name,
@@ -960,7 +1082,7 @@ function extractSeriesId(url) {
     return match ? match[1] : null;
 }
 function getObjectMetadata(id, options = { first: false }) {
-    const response = http.GET(`https://www.crunchyroll.com/content/v2/cms/objects/${id}?ratings=true`, getHeaders(), false);
+    const response = http.GET(replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: id, queryString: getLocationQueryString() }), getHeaders(), false);
     if (!response.isOk) {
         throw new ScriptException(`Failed to fetch metadata for content with ID ${id}`);
     }
@@ -1060,14 +1182,18 @@ function assToVtt(assContent) {
 
 function get_bearer() {
 
-    const html = http.GET("https://www.crunchyroll.com/", {}, true).body;
-    const match_result = html.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
+    const res = http.GET(BASE_URL, { 'User-Agent': config.authentication.userAgent }, true);
+
+    if (!res.isOk) {
+        throw new ScriptException(`Failed to fetch html. Status: ${res.code}`);
+    }
+
+    const match_result = res.body.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
     if (match_result === null || match_result[1] === undefined) {
         throw new ScriptException("regex error");
     }
     const accountAuthClientId = match_result[1];
     const auth = utility.toBase64(string_to_bytes(`${accountAuthClientId}:`));
-    const token_url = "https://www.crunchyroll.com/auth/v1/token";
     // TODO the bearer token likely needs to be refreshed after some amount of time
     // here is an example for Spotify if that's helpful
     // https://gitlab.futo.org/videostreaming/plugins/spotify/-/blob/master/src/SpotifyScript.ts?ref_type=heads#L255
@@ -1075,18 +1201,39 @@ function get_bearer() {
     let response;
 
     if (bridge.isLoggedIn()) {
-        response = JSON.parse(http.POST(token_url, "grant_type=etp_rt_cookie", {
+
+        const body = objectToUrlEncodedString({
+            device_id: local_state.deviceId,
+            device_type: 'Firefox on Windows',
+            grant_type: 'etp_rt_cookie'
+        });
+
+        const authRes = http.POST(AUTH_TOKEN_URL, body, {
             Authorization: `Basic ${auth}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-        }, true).body);
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }, true);
+
+        if (!authRes.isOk) {
+            bridge.toast(authRes.body);
+            throw new ScriptException(`Failed to fetch auth token. Status: ${authRes.code}`);
+        }
+
+        response = JSON.parse(authRes.body);
         // 5 minutes before the token expires
     }
     else {
-        response = JSON.parse(http.POST(token_url, "grant_type=client_id", {
+
+        const unauthRes = http.POST(AUTH_TOKEN_URL, "grant_type=client_id", {
             Authorization: `Basic ${auth}`,
             "Content-Type": "application/x-www-form-urlencoded",
             "Etp-Anonymous-Id": "6ba29c34-469b-4597-9d0d-9bbc672fb2d7"
-        }, false).body);
+        }, true);
+
+        if (!unauthRes.isOk) {
+            throw new ScriptException(`Failed to fetch auth token. Status: ${unauthRes.code}`);
+        }
+
+        response = JSON.parse(unauthRes.body);
         // 1h before the token expires
     }
 
@@ -1099,9 +1246,14 @@ function get_bearer() {
 function renewSession() {
     const { access_token, access_token_expires_at } = get_bearer();
 
+    if (!access_token) {
+        throw new LoginRequiredException("Failed to renew session");
+    }
+
     local_state.access_token_expires_at = access_token_expires_at;
     local_state.headers = {
         Authorization: `Bearer ${access_token}`,
+        'User-Agent': config.authentication.userAgent
     };
 
     if (bridge.isLoggedIn()) {
@@ -1111,23 +1263,34 @@ function renewSession() {
         local_state.isPremium = payload.benefits.some(benefit => benefit === 'cr_premium');
         local_state.concurrentStreams = payload.benefits.find(benefit => benefit.startsWith('concurrent_streams'))?.split('.').pop();
         local_state.accountId = payload.etp_user_id;
-        
+
     }
+
+    local_state.is_anonymous_session = !bridge.isLoggedIn();
 }
 
 function getHeaders() {
 
     const validAuthSession = local_state.access_token_expires_at > Date.now();
 
-    if (!validAuthSession) {
+    if (!validAuthSession || (local_state.is_anonymous_session && bridge.isLoggedIn())) {
         renewSession();
     }
 
+    local_state.headers['User-Agent'] = config.authentication.userAgent;
+
     return local_state.headers;
 }
-function getPreferedAudioLanguage() {
-    // -1 Subtraction is done to account for the "Original" option and ignore it
-    return local_settings.preferedAudioLanguageOptionIndex ? PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferedAudioLanguageOptionIndex - 1] : undefined;
+function getPreferredAudioLanguage() {
+    return PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS[local_settings.preferredAudioLanguageOptionIndex];
+}
+
+function getPreferredSubtitleLanguage() {
+    return local_settings.subtitlesLanguageOptionIndex ? SUBTITLE_OPTIONS[local_settings.subtitlesLanguageOptionIndex] : "en-US";
+}
+
+function getPreferedLocale() {
+    return local_settings.localeIndex ? LOCALE_OPTIONS[local_settings.localeIndex] : "en-US";
 }
 
 function decodeJWT(token) {
@@ -1169,5 +1332,203 @@ function decodeJWT(token) {
     }
 }
 
+
+function replaceUrlPlaceholders(url, values) {
+    // Guard against invalid inputs
+    if (!url || typeof url !== 'string') {
+        return '';
+    }
+
+    if (!values || typeof values !== 'object') {
+        return url;
+    }
+
+    let newUrl = url;
+
+    Object.keys(values).forEach((key) => {
+        // Look for placeholders like {key}
+        const placeholder = new RegExp(`\\{${key}\\}`, 'g');
+
+        // Only replace if the value is defined
+        if (values[key] !== undefined && values[key] !== null) {
+            // Convert to string and encode URI components to prevent injection
+            // const safeValue = encodeURIComponent(String(values[key]));
+            const safeValue = String(values[key]);
+            newUrl = newUrl.replace(placeholder, safeValue);
+        }
+    });
+
+    // Validate the resulting URL structure
+    try {
+        new URL(newUrl); // This will throw if the URL is invalid
+        return newUrl;
+    } catch (error) {
+        // If resulting URL is invalid, return original or empty string
+        console.warn('Generated URL is invalid:', newUrl);
+        return url.includes('://') ? url : '';
+    }
+}
+
+function getLocalizationSettings() {
+    // using same setting for know;
+    return {
+        locale: getPreferedLocale(),
+        preferred_audio_language: getPreferredAudioLanguage(),
+        force_locale: getPreferredAudioLanguage()
+    }
+}
+
+function generateUUIDv4() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+}
+
+
+/**
+ * Filters episodes to keep preferred language version when available, with fallback support
+ * @param {Array<Object>} episodes - Array of episode objects with metadata
+ * @param {string} preferredLanguage - User's preferred language code (e.g., 'pt-PT')
+ * @returns {Array<Object>} Filtered episodes array
+ */
+function filterEpisodesByLanguage(episodes, preferredLanguage) {
+    // Validate preferred language format
+    if (!preferredLanguage.match(/^[a-z]{2}-[A-Z]{2}$/)) {
+        throw new Error('Invalid language code format. Expected format: xx-XX (e.g., pt-PT)');
+    }
+
+    // Get base language for fallback (e.g., 'pt' from 'pt-PT')
+    const baseLanguage = preferredLanguage.split('-')[0];
+
+    // Create a Map to group episodes by their identifier
+    const episodeGroups = new Map();
+
+    // Group episodes by their identifier
+    for (const episode of episodes) {
+        const id = episode.episode_metadata?.identifier;
+        const language = episode.episode_metadata?.audio_locale;
+
+        // Skip episodes with invalid metadata
+        if (!id || !language) {
+            console.warn('Episode missing required metadata (identifier or audio_locale)', episode);
+            continue;
+        }
+
+        if (!episodeGroups.has(id)) {
+            episodeGroups.set(id, []);
+        }
+        episodeGroups.get(id).push(episode);
+    }
+
+    // Filter the episodes based on language preference with fallback
+    const filteredEpisodes = [];
+    for (const group of episodeGroups.values()) {
+        if (group.length === 1) {
+            // If only one language version exists, keep it
+            filteredEpisodes.push(group[0]);
+        } else {
+            // First, try to find exact language match
+            let selectedVersion = group.find(
+                ep => ep.episode_metadata?.audio_locale === preferredLanguage
+            );
+
+            // If exact match not found, try to find a version with same base language
+            if (!selectedVersion) {
+                selectedVersion = group.find(ep => {
+                    const episodeBaseLanguage = ep.episode_metadata?.audio_locale.split('-')[0];
+                    return episodeBaseLanguage === baseLanguage;
+                });
+            }
+
+            // If no preferred or fallback version found, use first version
+            filteredEpisodes.push(selectedVersion || group[0]);
+        }
+    }
+
+    return filteredEpisodes;
+}
+
+function savePreferences() {
+    if (bridge.isLoggedIn()) {
+        try {
+
+            let batch = http.batch();
+
+            [
+                { "preferred_content_audio_language": getPreferredAudioLanguage() },
+                { "preferred_content_subtitle_language": getPreferredSubtitleLanguage() },
+                { "do_not_sell": true },
+            ].forEach(requestBody => {
+                batch = batch.requestWithBody(
+                    'PATCH',
+                    USER_PROFILE_API_URL,
+                    JSON.stringify(requestBody),
+                    { ...getHeaders(), 'Content-Type': 'application/json' },
+                    true,
+                )
+            });
+
+            const responses = batch.execute();
+
+            if (IS_TESTING) {
+                log(`
+                    Response successful:
+                    preferred_content_audio_language: ${responses[0].isOk}
+                    preferred_content_subtitle_language: ${responses[1].isOk}
+                    do_not_sell: ${responses[2].isOk}`);
+            }
+
+        } catch (e) {
+            log(e);
+            log('failed to set preferences')
+        }
+    }
+}
+
+class CrunchyrollPlaybackTracker extends PlaybackTracker {
+
+    constructor(account_id, video_id, play_response_token) {
+        super(30000);
+        this.video_id = video_id;
+        this.play_response_token = play_response_token;
+        this.account_id = account_id;
+    }
+
+    onInit(seconds) {
+    }
+
+    onProgress(seconds, isPlaying) {
+        if (bridge.isLoggedIn()) {
+
+            if (seconds) {
+
+                const headers = {
+                    ...getHeaders(),
+                    'Content-Type': 'application/json'
+                };
+
+                http.POST(
+                    `https://www.crunchyroll.com/content/v2/${this.account_id}/playheads?preferred_audio_language=${getPreferredAudioLanguage()}&locale=${getPreferedLocale()}`,
+                    JSON.stringify({ "content_id": this.video_id, "playhead": seconds }),
+                    headers,
+                    true
+                );
+            }
+        }
+    }
+
+    onConcluded() {
+        if (bridge.isLoggedIn()) {
+            const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${this.video_id}/${this.play_response_token}`, getHeaders(), false);
+
+            if (!deleteActiveStream.isOk) {
+                bridge.toast(`Failed to delete active stream: ${deleteActiveStream.error}`);
+            }
+        }
+
+    }
+}
 
 //#endregion

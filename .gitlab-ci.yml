@@ -1,12 +1,12 @@
 stages:
   - deploy
 
-deploy-main:
+deploy-master:
   stage: deploy
   script:
     - sh deploy.sh
   only:
-    - main
+    - master
 
 deploy-dev:
   stage: deploy
