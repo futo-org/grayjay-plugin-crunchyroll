@@ -1182,15 +1182,21 @@ function assToVtt(assContent) {
 
 function get_bearer() {
 
-    const res = http.GET(BASE_URL, { 'User-Agent': config.authentication.userAgent }, true);
+    // Request BASE_URL - logged in users will be redirected to /discover
+    // Note: Crunchyroll may return 404 status with valid HTML content (soft 404)
+    const res = http.GET(BASE_URL, {
+        'User-Agent': config.authentication.userAgent
+    }, true);
 
-    if (!res.isOk) {
-        throw new ScriptException(`Failed to fetch html. Status: ${res.code}`);
+    // Check if we have a response body, even if status is 404
+    if (!res.body) {
+        throw new ScriptException(`Failed to fetch html. Status: ${res.code} ${res.url}. No response body.`);
     }
 
-    const match_result = res.body.match(/,"accountAuthClientId":"([_a-z0-9]*?)","/);
+    // Updated regex to be more flexible with the accountAuthClientId pattern
+    const match_result = res.body.match(/"accountAuthClientId":"([_a-z0-9]+)"/);
     if (match_result === null || match_result[1] === undefined) {
-        throw new ScriptException("regex error");
+        throw new ScriptException(`Failed to extract accountAuthClientId from page. Status: ${res.code}, URL: ${res.url}. Crunchyroll may have changed their page structure.`);
     }
     const accountAuthClientId = match_result[1];
     const auth = utility.toBase64(string_to_bytes(`${accountAuthClientId}:`));
@@ -1272,8 +1278,15 @@ function renewSession() {
 function getHeaders() {
 
     const validAuthSession = local_state.access_token_expires_at > Date.now();
+    const isLoggedIn = bridge.isLoggedIn();
 
-    if (!validAuthSession || (local_state.is_anonymous_session && bridge.isLoggedIn())) {
+    // Renew session if:
+    // 1. Token is expired
+    // 2. User logged in (anonymous -> authenticated)
+    // 3. User logged out (authenticated -> anonymous)
+    const loginStateChanged = local_state.is_anonymous_session !== !isLoggedIn;
+
+    if (!validAuthSession || loginStateChanged) {
         renewSession();
     }
 
