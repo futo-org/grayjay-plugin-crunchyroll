@@ -1169,7 +1169,7 @@ function assToVtt(assContent) {
             if (parts.length >= 10) {
                 const startTime = convertTime(parts[1]);
                 const endTime = convertTime(parts[2]);
-                let text = parts[9].replace(/\\N/g, '\n'); // Handle newlines
+                let text = parts.slice(9).join(',').replace(/\\N/g, '\n'); // Handle newlines
 
                 vttLines.push(`${startTime} --> ${endTime}`);
                 vttLines.push(text);
