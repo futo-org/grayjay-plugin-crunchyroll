@@ -652,6 +652,8 @@ function getContentChapters(url) {
         throw new ScriptException("Failed to fetch content chapters");
     }
 
+    const skipTypes = { intro: true, credits: true, preview: true };
+
     return Object.values(JSON.parse(response.body))
         .filter(skipEvent => typeof skipEvent === 'object')
         .sort((a, b) => a.start - b.start)
@@ -660,7 +662,7 @@ function getContentChapters(url) {
                 name: skipEvent.type,
                 timeStart: skipEvent.start,
                 timeEnd: skipEvent.end,
-                type: Type.Chapter.NORMAL,
+                type: skipTypes[skipEvent.type] ? Type.Chapter.SKIPPABLE : Type.Chapter.NORMAL,
             }
         });
 }
