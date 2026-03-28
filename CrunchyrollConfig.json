@@ -19,6 +19,7 @@
   "allowEval": false,
   "allowUrls": [
     ".crunchyroll.com",
+    ".crunchyrollcdn.com",
     "cr-play-service.prd.crunchyrollsvc.com",
     "cr-license-proxy.prd.crunchyrollsvc.com",
     "v.vrv.co"
