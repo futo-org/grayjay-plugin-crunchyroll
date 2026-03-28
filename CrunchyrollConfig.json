@@ -2,7 +2,7 @@
   "name": "Crunchyroll (Alpha)",
   "description": "Watch the latest anime on Crunchyroll",
   "author": "FUTO",
-  "authorUrl": "https://futo.org",
+  "authorUrl": "https://futo.tech",
   "platformUrl": "https://crunchyroll.com",
   "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
   "scriptUrl": "./CrunchyrollScript.js",
