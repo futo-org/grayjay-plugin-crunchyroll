@@ -812,21 +812,30 @@ function getContentDetails(url) {
         shareUrl: url,
         description: metadata.description,
         video: new VideoSourceDescriptor(sources),
-        // TODO subtitles will be import to get right considering the vast options available likely subtitles and closed captions
-        subtitles: Object.values(play_response?.subtitles ?? {}).map(subtitleInfo => {
-            return {
+        subtitles: [
+            ...Object.values(play_response?.subtitles ?? {}).map(subtitleInfo => ({
                 name: subtitleInfo.language,
                 url: subtitleInfo.url,
                 format: "text/vtt",
                 getSubtitles: () => {
                     const assSubtitleResponse = http.GET(subtitleInfo.url, {}, false);
                     if (assSubtitleResponse.isOk) {
-                        const assSubtitle = assSubtitleResponse.body;
-                        return assToVtt(assSubtitle);
+                        return assToVtt(assSubtitleResponse.body);
                     }
                 }
-            }
-        }),
+            })),
+            ...Object.values(play_response?.captions ?? {}).map(captionInfo => ({
+                name: captionInfo.language + ' (CC)',
+                url: captionInfo.url,
+                format: "text/vtt",
+                getSubtitles: () => {
+                    const captionResponse = http.GET(captionInfo.url, {}, false);
+                    if (captionResponse.isOk) {
+                        return captionResponse.body;
+                    }
+                }
+            }))
+        ],
         // TODO I'm not usre if total is the total interactions or the total upvotes
         // consider using the star rating instead of the like and dislike rating
         rating: new RatingLikesDislikes(likes, dislikes),
