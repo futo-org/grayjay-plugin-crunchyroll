@@ -654,6 +654,7 @@ function getContentChapters(url) {
 
     return Object.values(JSON.parse(response.body))
         .filter(skipEvent => typeof skipEvent === 'object')
+        .sort((a, b) => a.start - b.start)
         .map(skipEvent => {
             return {
                 name: skipEvent.type,
