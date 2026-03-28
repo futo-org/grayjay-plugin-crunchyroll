@@ -7,7 +7,7 @@
   "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
   "scriptUrl": "./CrunchyrollScript.js",
   "repositoryUrl": "https://gitlab.futo.org/videostreaming/plugins/crunchyroll",
-  "version": 15,
+  "version": 16,
   "iconUrl": "./CrunchyrollIcon.png",
   "id": "9bb33039-8580-48d4-9849-21319ae845a4",
   "scriptSignature": "",
@@ -167,6 +167,14 @@
     ],
     "15": [
       "Fix: support deep linking from localized URLs (e.g. fr-fr, en-us) for video and series pages;"
+    ],
+    "16": [
+      "Fix: Subtitles not properly escaping commas;",
+      "Fix: Sort skip events by start time in content chapters;",
+      "Improvement: Support deep linking from localized URLs (e.g. fr-fr, en-us) for video and series pages;",
+      "Improvement: Include closed captions (cc) as subtitles when available;",
+      "Improvement: Categorize skip events as skippable or normal in content chapters;",
+      "Configuration: Update author URL from futo.org to futo.tech;"
     ]
   }
 }
