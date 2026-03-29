@@ -19,8 +19,8 @@ const ACCOUNT_INFO_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{ac
 const SUBSCRIPTIONS_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{account_id}/custom-lists/{list_id}?{queryString}";
 const PLAY_URL_TEMPLATE = "https://cr-play-service.prd.crunchyrollsvc.com/v1/{video_id}/web/firefox/play";
 
-const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/watch\/([A-Z0-9]+)(?:\/.*)?$/;
-const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/series\/([A-Z0-9]+)(?:\/|$)/;
+const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/(?:[a-z]{2}-[a-z]{2}\/)?watch\/([A-Z0-9]+)(?:\/.*)?$/;
+const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/(?:[a-z]{2}-[a-z]{2}\/)?series\/([A-Z0-9]+)(?:\/|$)/;
 const REGEX_INTERNAL_PLAYLIST_URL = /^https:\/\/grayjay\.internal\/Crunchyroll\/playlist\/([A-Z0-9]+)(?:\?.*)?$/;
 
 const ITEMS_PER_PAGE = 100;
@@ -652,14 +652,17 @@ function getContentChapters(url) {
         throw new ScriptException("Failed to fetch content chapters");
     }
 
+    const skipTypes = { intro: true, credits: true, preview: true };
+
     return Object.values(JSON.parse(response.body))
         .filter(skipEvent => typeof skipEvent === 'object')
+        .sort((a, b) => a.start - b.start)
         .map(skipEvent => {
             return {
                 name: skipEvent.type,
                 timeStart: skipEvent.start,
                 timeEnd: skipEvent.end,
-                type: Type.Chapter.NORMAL,
+                type: skipTypes[skipEvent.type] ? Type.Chapter.SKIPPABLE : Type.Chapter.NORMAL,
             }
         });
 }
@@ -812,21 +815,30 @@ function getContentDetails(url) {
         shareUrl: url,
         description: metadata.description,
         video: new VideoSourceDescriptor(sources),
-        // TODO subtitles will be import to get right considering the vast options available likely subtitles and closed captions
-        subtitles: Object.values(play_response?.subtitles ?? {}).map(subtitleInfo => {
-            return {
+        subtitles: [
+            ...Object.values(play_response?.subtitles ?? {}).map(subtitleInfo => ({
                 name: subtitleInfo.language,
                 url: subtitleInfo.url,
                 format: "text/vtt",
                 getSubtitles: () => {
                     const assSubtitleResponse = http.GET(subtitleInfo.url, {}, false);
                     if (assSubtitleResponse.isOk) {
-                        const assSubtitle = assSubtitleResponse.body;
-                        return assToVtt(assSubtitle);
+                        return assToVtt(assSubtitleResponse.body);
                     }
                 }
-            }
-        }),
+            })),
+            ...Object.values(play_response?.captions ?? {}).map(captionInfo => ({
+                name: captionInfo.language + ' (CC)',
+                url: captionInfo.url,
+                format: "text/vtt",
+                getSubtitles: () => {
+                    const captionResponse = http.GET(captionInfo.url, {}, false);
+                    if (captionResponse.isOk) {
+                        return captionResponse.body;
+                    }
+                }
+            }))
+        ],
         // TODO I'm not usre if total is the total interactions or the total upvotes
         // consider using the star rating instead of the like and dislike rating
         rating: new RatingLikesDislikes(likes, dislikes),
@@ -1169,7 +1181,7 @@ function assToVtt(assContent) {
             if (parts.length >= 10) {
                 const startTime = convertTime(parts[1]);
                 const endTime = convertTime(parts[2]);
-                let text = parts[9].replace(/\\N/g, '\n'); // Handle newlines
+                let text = parts.slice(9).join(',').replace(/\\N/g, '\n'); // Handle newlines
 
                 vttLines.push(`${startTime} --> ${endTime}`);
                 vttLines.push(text);

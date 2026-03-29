@@ -2,12 +2,12 @@
   "name": "Crunchyroll (Alpha)",
   "description": "Watch the latest anime on Crunchyroll",
   "author": "FUTO",
-  "authorUrl": "https://futo.org",
+  "authorUrl": "https://futo.tech",
   "platformUrl": "https://crunchyroll.com",
   "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
   "scriptUrl": "./CrunchyrollScript.js",
   "repositoryUrl": "https://gitlab.futo.org/videostreaming/plugins/crunchyroll",
-  "version": 15,
+  "version": 16,
   "iconUrl": "./CrunchyrollIcon.png",
   "id": "9bb33039-8580-48d4-9849-21319ae845a4",
   "scriptSignature": "",
@@ -19,6 +19,7 @@
   "allowEval": false,
   "allowUrls": [
     ".crunchyroll.com",
+    ".crunchyrollcdn.com",
     "cr-play-service.prd.crunchyrollsvc.com",
     "cr-license-proxy.prd.crunchyrollsvc.com",
     "v.vrv.co"
@@ -165,7 +166,15 @@
       "Fix: error when description contains alternate streams in Japanese;"
     ],
     "15": [
-      "Fix: Home tab error"
+      "Fix: Home tab error;"
+    ],
+    "16": [
+      "Fix: Subtitles not properly escaping commas;",
+      "Fix: Sort skip events by start time in content chapters;",
+      "Improvement: Support deep linking from localized URLs (e.g. fr-fr, en-us) for video and series pages;",
+      "Improvement: Include closed captions (cc) as subtitles when available;",
+      "Improvement: Categorize skip events as skippable or normal in content chapters;",
+      "Configuration: Update author URL from futo.org to futo.tech;"
     ]
   }
 }
