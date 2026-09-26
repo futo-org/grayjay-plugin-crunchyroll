@@ -748,9 +748,12 @@ function getContentDetails(url) {
                             "X-Cr-Content-Id": video_id,
                             "X-Cr-Video-Token": play_response.token,
                             "Content-Type": "application/octet-stream"
-                        }, false).body;
+                        }, false, true);
 
-                        return utility.fromBase64(response);
+                        if (!response.isOk || !response.body) {
+                            throw new ScriptException("Failed to acquire license [" + response.code + "]");
+                        }
+                        return response.body;
                     }
                 };
             }
