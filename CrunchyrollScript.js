@@ -48,9 +48,15 @@ let local_state = {
     deviceId: generateUUIDv4()
 };
 
+// Desktop builds without Widevine can browse but never play, so keep the plugin off there
+const IS_HLS_WIDEVINE_AVAILABLE = (bridge.supportedFeatures ?? []).indexOf("HLSWidevineSource") >= 0;
+
 const runtime_requirements = [
-    bridge.buildPlatform === "android"
+    bridge.buildPlatform === "android" || (bridge.buildPlatform === "desktop" && IS_HLS_WIDEVINE_AVAILABLE)
 ]
+
+// Desktop: Cloudflare rejects the default HTTP client's TLS fingerprint; use curl-impersonate
+const http_client = (bridge.buildPlatform === "desktop" && typeof httpimp !== "undefined") ? httpimp : http;
 
 let config = {};
 let UNAVAILABLE_OPTIONS = [];
@@ -182,7 +188,7 @@ function getHome() {
                 ratings: true,
             });
 
-            let batchRequests = http.batch();
+            let batchRequests = http_client.batch();
             batchRequests.GET(replaceUrlPlaceholders(EXPLORE_URL_TEMPLATE, { query }), getHeaders());
 
             if (isFirstPage) {
@@ -269,7 +275,7 @@ function getHome() {
         }
 
         fetchFreeToWatchContent(urlSet) {
-            let freeToWatchBatchRequests = http.batch();
+            let freeToWatchBatchRequests = http_client.batch();
 
             urlSet.forEach(url => {
                 freeToWatchBatchRequests.GET(`${BASE_URL}${url}`, getHeaders(), true);
@@ -298,7 +304,7 @@ function getHome() {
         fetchEpisodesByIds(ids) {
             if (!ids.length) return [];
 
-            const episodeResponse = http.GET(
+            const episodeResponse = http_client.GET(
                 replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: ids.join(","), queryString: getLocationQueryString() }),
                 getHeaders(),
                 true
@@ -371,7 +377,7 @@ function getChannelContents(url) {
     }
 
 
-    const seasonsResponse = http
+    const seasonsResponse = http_client
         .GET(replaceUrlPlaceholders(OBJECT_SERIE_SEASONS_URL_TEMPLATE, { seriesId: seriesId, queryString: objectToUrlEncodedString(getLocalizationSettings()) }), getHeaders(), true);
 
     if (!seasonsResponse.isOk) {
@@ -418,7 +424,7 @@ function getChannelPlaylists(url) {
         throw new ScriptException("Invalid channel URL");
     }
 
-    const [serieInfoResponse, seasonsResponse] = http
+    const [serieInfoResponse, seasonsResponse] = http_client
         .batch()
         .GET(replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: seriesId, queryString: getLocationQueryString() }), getHeaders(), false)
         .GET(replaceUrlPlaceholders(OBJECT_SERIE_SEASONS_URL_TEMPLATE, { seriesId: seriesId, queryString: objectToUrlEncodedString(getLocalizationSettings()) }), getHeaders(), true)
@@ -481,7 +487,7 @@ function getSeasonEpisodes(seasonId, opts = { isPlaylist: true, filterCb: null }
         opts.filterCb = () => true;
     }
 
-    const seasonEpisodes = http.GET(replaceUrlPlaceholders(OBJECT_SEASON_EPISODES_URL_TEMPLATE, { seasonId, queryString: objectToUrlEncodedString(getLocalizationSettings()) }), getHeaders(), true);
+    const seasonEpisodes = http_client.GET(replaceUrlPlaceholders(OBJECT_SEASON_EPISODES_URL_TEMPLATE, { seasonId, queryString: objectToUrlEncodedString(getLocalizationSettings()) }), getHeaders(), true);
 
     if (!seasonEpisodes.isOk) {
         throw new ScriptException("Failed to fetch season episodes");
@@ -519,7 +525,7 @@ source.getPlaylist = function (url) {
         const reqUrl = getReqUrl(playlistId);
 
 
-        const response = http.GET(reqUrl, getHeaders(), true);
+        const response = http_client.GET(reqUrl, getHeaders(), true);
 
         if (response.isOk) {
 
@@ -532,7 +538,7 @@ source.getPlaylist = function (url) {
             const total = data.total;
             const pendingPages = Math.ceil(total / itemsPerPage) - 1;
 
-            let batchRequests = http.batch();
+            let batchRequests = http_client.batch();
 
             Array
                 .from({ length: pendingPages }, (_, i) => {
@@ -551,7 +557,7 @@ source.getPlaylist = function (url) {
                     episodeIds = [...episodeIds, ...data.data.map(e => e.panel.id)];
                 });
 
-            const episodeListResponse = http.GET(
+            const episodeListResponse = http_client.GET(
                 replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: episodeIds.join(","), queryString: getLocationQueryString() }),
                 getHeaders(),
                 true
@@ -646,7 +652,7 @@ function getContentChapters(url) {
 
     const videoId = url.match(CONTENT_DETAIL_REGEX)?.[1];
 
-    const response = http.GET(replaceUrlPlaceholders(VIDEO_SKIP_EVENTS_URL_TEMPLATE, { videoId }), {}, false);
+    const response = http_client.GET(replaceUrlPlaceholders(VIDEO_SKIP_EVENTS_URL_TEMPLATE, { videoId }), {}, false);
 
     if (!response.isOk) {
         throw new ScriptException("Failed to fetch content chapters");
@@ -676,7 +682,7 @@ function getContentDetails(url) {
     if (video_id === undefined) {
         throw new ScriptException("regex error");
     }
-    const responses = http
+    const responses = http_client
         .batch()
         .GET(replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: video_id, queryString: getLocationQueryString() }), getHeaders(), false)
         .GET(replaceUrlPlaceholders(PLAY_URL_TEMPLATE, { video_id: video_id }), getHeaders(), false)
@@ -743,7 +749,7 @@ function getContentDetails(url) {
                         if (license_request_data === null) {
                             throw new ScriptException("missing license request data");
                         }
-                        const response = http.POST(url, license_request_data, {
+                        const response = http_client.POST(url, license_request_data, {
                             ...getHeaders(),
                             "X-Cr-Content-Id": video_id,
                             "X-Cr-Video-Token": play_response.token,
@@ -824,7 +830,7 @@ function getContentDetails(url) {
                 url: subtitleInfo.url,
                 format: "text/vtt",
                 getSubtitles: () => {
-                    const assSubtitleResponse = http.GET(subtitleInfo.url, {}, false);
+                    const assSubtitleResponse = http_client.GET(subtitleInfo.url, {}, false);
                     if (assSubtitleResponse.isOk) {
                         return assToVtt(assSubtitleResponse.body);
                     }
@@ -835,7 +841,7 @@ function getContentDetails(url) {
                 url: captionInfo.url,
                 format: "text/vtt",
                 getSubtitles: () => {
-                    const captionResponse = http.GET(captionInfo.url, {}, false);
+                    const captionResponse = http_client.GET(captionInfo.url, {}, false);
                     if (captionResponse.isOk) {
                         return captionResponse.body;
                     }
@@ -893,14 +899,14 @@ function getUserSubscriptions() {
     const subscriptions = [];
 
     try {
-        const response = http.GET(replaceUrlPlaceholders(ACCOUNT_INFO_URL_PLACEHOLDER, { account_id: local_state.accountId, queryString: getLocationQueryString() }), getHeaders(), true);
+        const response = http_client.GET(replaceUrlPlaceholders(ACCOUNT_INFO_URL_PLACEHOLDER, { account_id: local_state.accountId, queryString: getLocationQueryString() }), getHeaders(), true);
 
         if (response.isOk) {
 
             const listsIds = JSON.parse(response.body)?.data?.map(l => l.list_id) ?? [];
 
             if (listsIds.length) {
-                const batchRequests = http.batch();
+                const batchRequests = http_client.batch();
 
                 listsIds.forEach(listId => {
                     batchRequests.GET(replaceUrlPlaceholders(SUBSCRIPTIONS_URL_PLACEHOLDER, { account_id: local_state.accountId, list_id: listId, queryString: getLocationQueryString() }), getHeaders(), true);
@@ -962,7 +968,7 @@ function genericSearch(query, type, order, filters) {
             });
 
 
-            const response = http.GET(replaceUrlPlaceholders(SEARCH_TEMPLATE_URL, { queryString }), getHeaders(), true);
+            const response = http_client.GET(replaceUrlPlaceholders(SEARCH_TEMPLATE_URL, { queryString }), getHeaders(), true);
 
             const contentList = [];
             if (response.isOk) {
@@ -1097,7 +1103,7 @@ function extractSeriesId(url) {
     return match ? match[1] : null;
 }
 function getObjectMetadata(id, options = { first: false }) {
-    const response = http.GET(replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: id, queryString: getLocationQueryString() }), getHeaders(), false);
+    const response = http_client.GET(replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: id, queryString: getLocationQueryString() }), getHeaders(), false);
     if (!response.isOk) {
         throw new ScriptException(`Failed to fetch metadata for content with ID ${id}`);
     }
@@ -1199,7 +1205,7 @@ function get_bearer() {
 
     // Request BASE_URL - logged in users will be redirected to /discover
     // Note: Crunchyroll may return 404 status with valid HTML content (soft 404)
-    const res = http.GET(BASE_URL, {
+    const res = http_client.GET(BASE_URL, {
         'User-Agent': config.authentication.userAgent
     }, true);
 
@@ -1229,7 +1235,7 @@ function get_bearer() {
             grant_type: 'etp_rt_cookie'
         });
 
-        const authRes = http.POST(AUTH_TOKEN_URL, body, {
+        const authRes = http_client.POST(AUTH_TOKEN_URL, body, {
             Authorization: `Basic ${auth}`,
             'Content-Type': 'application/x-www-form-urlencoded'
         }, true);
@@ -1244,7 +1250,7 @@ function get_bearer() {
     }
     else {
 
-        const unauthRes = http.POST(AUTH_TOKEN_URL, "grant_type=client_id", {
+        const unauthRes = http_client.POST(AUTH_TOKEN_URL, "grant_type=client_id", {
             Authorization: `Basic ${auth}`,
             "Content-Type": "application/x-www-form-urlencoded",
             "Etp-Anonymous-Id": "6ba29c34-469b-4597-9d0d-9bbc672fb2d7"
@@ -1482,7 +1488,7 @@ function savePreferences() {
     if (bridge.isLoggedIn()) {
         try {
 
-            let batch = http.batch();
+            let batch = http_client.batch();
 
             [
                 { "preferred_content_audio_language": getPreferredAudioLanguage() },
@@ -1537,7 +1543,7 @@ class CrunchyrollPlaybackTracker extends PlaybackTracker {
                     'Content-Type': 'application/json'
                 };
 
-                http.POST(
+                http_client.POST(
                     `https://www.crunchyroll.com/content/v2/${this.account_id}/playheads?preferred_audio_language=${getPreferredAudioLanguage()}&locale=${getPreferedLocale()}`,
                     JSON.stringify({ "content_id": this.video_id, "playhead": seconds }),
                     headers,
@@ -1549,7 +1555,7 @@ class CrunchyrollPlaybackTracker extends PlaybackTracker {
 
     onConcluded() {
         if (bridge.isLoggedIn()) {
-            const deleteActiveStream = http.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${this.video_id}/${this.play_response_token}`, getHeaders(), false);
+            const deleteActiveStream = http_client.request('DELETE', `https://www.crunchyroll.com/playback/v1/token/${this.video_id}/${this.play_response_token}`, getHeaders(), false);
 
             if (!deleteActiveStream.isOk) {
                 bridge.toast(`Failed to delete active stream: ${deleteActiveStream.error}`);
