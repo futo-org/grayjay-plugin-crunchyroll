@@ -7,7 +7,7 @@
   "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
   "scriptUrl": "./CrunchyrollScript.js",
   "repositoryUrl": "https://gitlab.futo.org/videostreaming/plugins/crunchyroll",
-  "version": 16,
+  "version": 17,
   "iconUrl": "./CrunchyrollIcon.png",
   "id": "9bb33039-8580-48d4-9849-21319ae845a4",
   "scriptSignature": "",
@@ -175,6 +175,9 @@
       "Improvement: Include closed captions (cc) as subtitles when available;",
       "Improvement: Categorize skip events as skippable or normal in content chapters;",
       "Configuration: Update author URL from futo.org to futo.tech;"
+    ],
+    "17": [
+      "Fix: Playback failing because the license is now returned as binary instead of base64;"
     ]
   }
 }
