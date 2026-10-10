@@ -137,7 +137,7 @@ function enable(conf, settings, saved_state) {
     PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS = Object.keys(PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES);
 
     if (IS_TESTING) {
-        local_settings.premiumContentUnavailableIndex = 0; // As locked content
+        local_settings.premiumContentUnavailableIndex = 0; // As regular content
         local_settings.preferredAudioLanguageOptionIndex = 0; // Original
     }
 
@@ -198,7 +198,7 @@ function getHome() {
             const responses = batchRequests.execute();
 
             if (!responses[0].isOk) {
-                throw new ScriptException(`Failed to fetch discover page. Status: ${responses[0].status}`);
+                throw new ScriptException(`Failed to fetch discover page. Status: ${responses[0].code}`);
             }
 
             const discoverBody = JSON.parse(responses[0].body);
@@ -207,7 +207,7 @@ function getHome() {
             if (isFirstPage && !local_state.isPremium) {
                 const homeResponse = responses[1];
                 if (!homeResponse.isOk) {
-                    throw new ScriptException(`Failed to fetch home page. Status: ${homeResponse.status}`);
+                    throw new ScriptException(`Failed to fetch home page. Status: ${homeResponse.code}`);
                 }
 
                 const homeBody = JSON.parse(homeResponse.body);
@@ -690,6 +690,12 @@ function getContentDetails(url) {
     if (responses[0] === undefined || responses[1] === undefined) {
         throw new ScriptException("unreachable");
     }
+    if (!responses[0].isOk) {
+        if (responses[0].code === 404) {
+            throw new UnavailableException("This episode is not available");
+        }
+        throw new ScriptException(`Failed to fetch episode metadata. Status: ${responses[0].code}`);
+    }
     const episode_response = JSON.parse(responses[0].body);
     const play_response = JSON.parse(responses[1].body);
 
@@ -1032,13 +1038,17 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
     const thumbnails = new Thumbnails(t);
     const url = replaceUrlPlaceholders(EPISODE_URL_TEMPLATE, { episode_id: episode.id, episode_slug_title: episode.slug_title });
 
-    const isPremiumOnly = episode?.episode_metadata?.availability_status === 'premium_only';
+    const availabilityStatus = episode?.episode_metadata?.availability_status;
+    const isPremiumOnly = availabilityStatus === 'premium_only';
+    const isUnavailable = availabilityStatus === 'unavailable';
     const isLoggedIn = bridge.isLoggedIn();
     const premiumContentUnavailableOption = UNAVAILABLE_OPTIONS[local_settings.premiumContentUnavailableIndex];
-    const shouldShowContent = opts.isPlaylist || !isPremiumOnly || local_state.isPremium || premiumContentUnavailableOption === "As regular content";
 
     const author = new PlatformAuthorLink(new PlatformID(PLATFORM, episode?.episode_metadata?.series_id, plugin.config.id), (episode.episode_metadata.series_title), `${SERIES_URL_PREFIX}${(episode.episode_metadata.series_id)}/${(episode.episode_metadata.series_slug_title)}`);
     const datetime = new Date(episode.episode_metadata.upload_date).getTime() / 1000;
+    // The apps show a live item with a future date as planned
+    const isPlanned = isUnavailable && datetime > Date.now() / 1000;
+    const shouldShowContent = opts.isPlaylist || !isPremiumOnly || local_state.isPremium || premiumContentUnavailableOption === "As regular content";
     const durationInMs = episode?.episode_metadata?.duration_ms ?? 0;
 
 
@@ -1054,7 +1064,20 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
 
     const name = nameParts.join(' ');
 
-    if (shouldShowContent) {
+    if (isUnavailable && !isPlanned && !opts.isPlaylist) {
+        if (premiumContentUnavailableOption === "Hide") {
+            return;
+        }
+        return new PlatformLockedContent({
+            id: new PlatformID(PLATFORM, episode.id, plugin.config.id),
+            name,
+            author,
+            datetime,
+            lockDescription: 'This episode is not available',
+            unlockUrl: "",
+        });
+    }
+    else if (shouldShowContent) {
         return new PlatformVideo({
             id: new PlatformID(PLATFORM, episode.id, plugin.config.id),
             name,
@@ -1063,7 +1086,7 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
             datetime,
             url,
             duration: durationInMs ? durationInMs / 1000 : 0,
-            isLive: false,
+            isLive: isPlanned,
             shareUrl: url
         });
     }
