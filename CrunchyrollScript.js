@@ -17,13 +17,15 @@ const OBJECT_SEASON_EPISODES_URL_TEMPLATE = "https://www.crunchyroll.com/content
 const VIDEO_SKIP_EVENTS_URL_TEMPLATE = "https://static.crunchyroll.com/skip-events/production/{videoId}.json";
 const ACCOUNT_INFO_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{account_id}/custom-lists?{queryString}";
 const SUBSCRIPTIONS_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{account_id}/custom-lists/{list_id}?{queryString}";
-const PLAY_URL_TEMPLATE = "https://cr-play-service.prd.crunchyrollsvc.com/v1/{video_id}/web/firefox/play";
+const WATCH_HISTORY_URL_TEMPLATE = "https://www.crunchyroll.com/content/v2/{account_id}/watch-history?{queryString}";
+const PLAY_URL_TEMPLATE ="https://cr-play-service.prd.crunchyrollsvc.com/v1/{video_id}/web/firefox/play";
 
 const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/(?:[a-z]{2}-[a-z]{2}\/)?watch\/([A-Z0-9]+)(?:\/.*)?$/;
 const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/(?:[a-z]{2}-[a-z]{2}\/)?series\/([A-Z0-9]+)(?:\/|$)/;
 const REGEX_INTERNAL_PLAYLIST_URL = /^https:\/\/grayjay\.internal\/Crunchyroll\/playlist\/([A-Z0-9]+)(?:\?.*)?$/;
 
 const ITEMS_PER_PAGE = 100;
+const HISTORY_ITEMS_PER_PAGE = 50;
 // const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0" as const
 // set missing constants
 Type.Order.Chronological = "Latest releases";
@@ -85,6 +87,7 @@ const local_source = {
     isPlaylistUrl,
     getUserSubscriptions,
     getUserPlaylists,
+    getUserHistory,
 };
 
 init_source(local_source);
@@ -137,7 +140,7 @@ function enable(conf, settings, saved_state) {
     PREFERED_AUDIO_LANGUAGE_OPTIONS_KEYS = Object.keys(PREFERED_AUDIO_LANGUAGE_OPTIONS_VALUES);
 
     if (IS_TESTING) {
-        local_settings.premiumContentUnavailableIndex = 0; // As locked content
+        local_settings.premiumContentUnavailableIndex = 0; // As regular content
         local_settings.preferredAudioLanguageOptionIndex = 0; // Original
     }
 
@@ -198,7 +201,7 @@ function getHome() {
             const responses = batchRequests.execute();
 
             if (!responses[0].isOk) {
-                throw new ScriptException(`Failed to fetch discover page. Status: ${responses[0].status}`);
+                throw new ScriptException(`Failed to fetch discover page. Status: ${responses[0].code}`);
             }
 
             const discoverBody = JSON.parse(responses[0].body);
@@ -207,7 +210,7 @@ function getHome() {
             if (isFirstPage && !local_state.isPremium) {
                 const homeResponse = responses[1];
                 if (!homeResponse.isOk) {
-                    throw new ScriptException(`Failed to fetch home page. Status: ${homeResponse.status}`);
+                    throw new ScriptException(`Failed to fetch home page. Status: ${homeResponse.code}`);
                 }
 
                 const homeBody = JSON.parse(homeResponse.body);
@@ -690,6 +693,12 @@ function getContentDetails(url) {
     if (responses[0] === undefined || responses[1] === undefined) {
         throw new ScriptException("unreachable");
     }
+    if (!responses[0].isOk) {
+        if (responses[0].code === 404) {
+            throw new UnavailableException("This episode is not available");
+        }
+        throw new ScriptException(`Failed to fetch episode metadata. Status: ${responses[0].code}`);
+    }
     const episode_response = JSON.parse(responses[0].body);
     const play_response = JSON.parse(responses[1].body);
 
@@ -938,6 +947,94 @@ function getUserPlaylists() {
         'crunchyroll:playlist:watch-history',
     ]
 }
+
+/**
+ * Watch history, newest first, for the app's history sync. Each video carries the
+ * resume position (`playbackTime`) and when it was played (`playbackDate`).
+ */
+function getUserHistory() {
+
+    if (!bridge.isLoggedIn()) {
+        return new VideoPager([], false);
+    }
+
+    class UserHistoryPager extends VideoPager {
+
+        constructor({
+            videos = [],
+            hasMore = true,
+            context = { start: 0 },
+        } = {}) {
+            super(videos, hasMore, context);
+        }
+
+        nextPage() {
+            const start = this.context.start;
+            // getHeaders renews the session, which is what sets accountId
+            const headers = getHeaders();
+
+            const historyResponse = http_client.GET(
+                replaceUrlPlaceholders(WATCH_HISTORY_URL_TEMPLATE, {
+                    account_id: local_state.accountId,
+                    queryString: objectToUrlEncodedString({ order: 'desc', n: HISTORY_ITEMS_PER_PAGE, start, ...getLocalizationSettings() })
+                }),
+                headers,
+                true
+            );
+
+            if (!historyResponse.isOk) {
+                throw new ScriptException(`Failed to fetch watch history. Status: ${historyResponse.code}`);
+            }
+
+            const history = JSON.parse(historyResponse.body);
+            // The API occasionally sends an entry without its panel
+            const entries = history.data.filter(entry => entry.panel);
+
+            const videos = [];
+
+            if (entries.length) {
+                const episodesResponse = http_client.GET(
+                    replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: entries.map(entry => entry.panel.id).join(","), queryString: getLocationQueryString() }),
+                    headers,
+                    true
+                );
+
+                if (!episodesResponse.isOk) {
+                    throw new ScriptException(`Failed to fetch watch history episodes. Status: ${episodesResponse.code}`);
+                }
+
+                const episodesById = {};
+                JSON.parse(episodesResponse.body).data.forEach(episode => {
+                    episodesById[episode.id] = episode;
+                });
+
+                entries.forEach(entry => {
+                    const episode = episodesById[entry.panel.id];
+                    if (!episode) {
+                        return;
+                    }
+
+                    const video = episodeToPlatformVideo(episode, { isPlaylist: true });
+                    const durationInSeconds = (episode.episode_metadata.duration_ms ?? 0) / 1000;
+
+                    // Desktop's PlatformVideo constructor drops both fields, so they are set on the built object
+                    video.playbackTime = entry.fully_watched && durationInSeconds > 0 ? durationInSeconds : entry.playhead;
+                    video.playbackDate = Math.floor(new Date(entry.date_played).getTime() / 1000);
+
+                    videos.push(video);
+                });
+            }
+
+            return new UserHistoryPager({
+                videos,
+                hasMore: start + history.data.length < history.total,
+                context: { start: start + HISTORY_ITEMS_PER_PAGE },
+            });
+        }
+    }
+
+    return new UserHistoryPager().nextPage();
+}
 //#endregion
 //#region utilities
 function genericSearch(query, type, order, filters) {
@@ -1032,13 +1129,17 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
     const thumbnails = new Thumbnails(t);
     const url = replaceUrlPlaceholders(EPISODE_URL_TEMPLATE, { episode_id: episode.id, episode_slug_title: episode.slug_title });
 
-    const isPremiumOnly = episode?.episode_metadata?.availability_status === 'premium_only';
+    const availabilityStatus = episode?.episode_metadata?.availability_status;
+    const isPremiumOnly = availabilityStatus === 'premium_only';
+    const isUnavailable = availabilityStatus === 'unavailable';
     const isLoggedIn = bridge.isLoggedIn();
     const premiumContentUnavailableOption = UNAVAILABLE_OPTIONS[local_settings.premiumContentUnavailableIndex];
-    const shouldShowContent = opts.isPlaylist || !isPremiumOnly || local_state.isPremium || premiumContentUnavailableOption === "As regular content";
 
     const author = new PlatformAuthorLink(new PlatformID(PLATFORM, episode?.episode_metadata?.series_id, plugin.config.id), (episode.episode_metadata.series_title), `${SERIES_URL_PREFIX}${(episode.episode_metadata.series_id)}/${(episode.episode_metadata.series_slug_title)}`);
     const datetime = new Date(episode.episode_metadata.upload_date).getTime() / 1000;
+    // The apps show a live item with a future date as planned
+    const isPlanned = isUnavailable && datetime > Date.now() / 1000;
+    const shouldShowContent = opts.isPlaylist || !isPremiumOnly || local_state.isPremium || premiumContentUnavailableOption === "As regular content";
     const durationInMs = episode?.episode_metadata?.duration_ms ?? 0;
 
 
@@ -1054,7 +1155,20 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
 
     const name = nameParts.join(' ');
 
-    if (shouldShowContent) {
+    if (isUnavailable && !isPlanned && !opts.isPlaylist) {
+        if (premiumContentUnavailableOption === "Hide") {
+            return;
+        }
+        return new PlatformLockedContent({
+            id: new PlatformID(PLATFORM, episode.id, plugin.config.id),
+            name,
+            author,
+            datetime,
+            lockDescription: 'This episode is not available',
+            unlockUrl: "",
+        });
+    }
+    else if (shouldShowContent) {
         return new PlatformVideo({
             id: new PlatformID(PLATFORM, episode.id, plugin.config.id),
             name,
@@ -1063,7 +1177,7 @@ function episodeToPlatformVideo(episode, opts = { isPlaylist: false }) {
             datetime,
             url,
             duration: durationInMs ? durationInMs / 1000 : 0,
-            isLive: false,
+            isLive: isPlanned,
             shareUrl: url
         });
     }

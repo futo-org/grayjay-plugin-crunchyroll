@@ -1,5 +1,5 @@
 {
-  "name": "Crunchyroll (Alpha)",
+  "name": "Crunchyroll",
   "description": "Watch the latest anime on Crunchyroll",
   "author": "FUTO",
   "authorUrl": "https://futo.tech",
@@ -7,7 +7,7 @@
   "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
   "scriptUrl": "./CrunchyrollScript.js",
   "repositoryUrl": "https://gitlab.futo.org/videostreaming/plugins/crunchyroll",
-  "version": 18,
+  "version": 20,
   "iconUrl": "./CrunchyrollIcon.png",
   "id": "9bb33039-8580-48d4-9849-21319ae845a4",
   "scriptSignature": "",
@@ -38,7 +38,7 @@
     {
       "variable": "premiumContentUnavailableIndex",
       "name": "Premium Content Unavailable",
-      "description": "How to handle premiun content not available to current user",
+      "description": "How to handle premium content not available to the current user, and episodes that are not available",
       "type": "Dropdown",
       "default": "0",
       "options": [
@@ -169,7 +169,7 @@
       "Fix: error when description contains alternate streams in Japanese;"
     ],
     "15": [
-      "Fix: support deep linking from localized URLs (e.g. fr-fr, en-us) for video and series pages;"
+      "Fix: Home tab error;"
     ],
     "16": [
       "Fix: Subtitles not properly escaping commas;",
@@ -184,6 +184,14 @@
     ],
     "18": [
       "Add: Desktop support (requires a desktop build with Widevine);"
+    ],
+    "19": [
+      "Fix: Error when opening an episode that has not aired yet;",
+      "Improvement: Show upcoming episodes as planned on desktop;",
+      "Improvement: Show unavailable episodes as locked or hide them, following the premium content setting;"
+    ],
+    "20": [
+      "Feature: Sync watch history and resume positions from your Crunchyroll account (turn on Sync Remote History in the source settings);"
     ]
   }
 }
