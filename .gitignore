@@ -6,3 +6,7 @@ _dist
 !eslint.config.js
 !build/*
 build/types.js*
+
+.bin
+*.pem
+.env

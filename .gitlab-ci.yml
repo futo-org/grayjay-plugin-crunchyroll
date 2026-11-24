@@ -1,8 +1,16 @@
 stages:
   - deploy
 
+variables:
+  PLUGIN_NAME: Crunchyroll
+  ICON_FILE: CrunchyrollIcon.png
+  SCRIPT_FILE: CrunchyrollScript.js
+  CONFIG_FILE: CrunchyrollConfig.json
+
 deploy-master:
   stage: deploy
+  variables:
+    PRE_RELEASE: "false"
   script:
     - sh deploy.sh
   only:
@@ -10,8 +18,9 @@ deploy-master:
 
 deploy-dev:
   stage: deploy
+  variables:
+    PRE_RELEASE: "true"
   script:
-    - export PRE_RELEASE=true
     - sh deploy.sh
   only:
     - dev
