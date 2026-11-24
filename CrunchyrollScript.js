@@ -17,13 +17,15 @@ const OBJECT_SEASON_EPISODES_URL_TEMPLATE = "https://www.crunchyroll.com/content
 const VIDEO_SKIP_EVENTS_URL_TEMPLATE = "https://static.crunchyroll.com/skip-events/production/{videoId}.json";
 const ACCOUNT_INFO_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{account_id}/custom-lists?{queryString}";
 const SUBSCRIPTIONS_URL_PLACEHOLDER = "https://www.crunchyroll.com/content/v2/{account_id}/custom-lists/{list_id}?{queryString}";
-const PLAY_URL_TEMPLATE = "https://cr-play-service.prd.crunchyrollsvc.com/v1/{video_id}/web/firefox/play";
+const WATCH_HISTORY_URL_TEMPLATE = "https://www.crunchyroll.com/content/v2/{account_id}/watch-history?{queryString}";
+const PLAY_URL_TEMPLATE ="https://cr-play-service.prd.crunchyrollsvc.com/v1/{video_id}/web/firefox/play";
 
 const CONTENT_DETAIL_REGEX = /^https:\/\/www\.crunchyroll\.com\/(?:[a-z]{2}-[a-z]{2}\/)?watch\/([A-Z0-9]+)(?:\/.*)?$/;
 const SERIES_REGEX = /https?:\/\/www\.crunchyroll\.com\/(?:[a-z]{2}-[a-z]{2}\/)?series\/([A-Z0-9]+)(?:\/|$)/;
 const REGEX_INTERNAL_PLAYLIST_URL = /^https:\/\/grayjay\.internal\/Crunchyroll\/playlist\/([A-Z0-9]+)(?:\?.*)?$/;
 
 const ITEMS_PER_PAGE = 100;
+const HISTORY_ITEMS_PER_PAGE = 50;
 // const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0" as const
 // set missing constants
 Type.Order.Chronological = "Latest releases";
@@ -85,6 +87,7 @@ const local_source = {
     isPlaylistUrl,
     getUserSubscriptions,
     getUserPlaylists,
+    getUserHistory,
 };
 
 init_source(local_source);
@@ -943,6 +946,94 @@ function getUserPlaylists() {
         'crunchyroll:playlist:watchlist',
         'crunchyroll:playlist:watch-history',
     ]
+}
+
+/**
+ * Watch history, newest first, for the app's history sync. Each video carries the
+ * resume position (`playbackTime`) and when it was played (`playbackDate`).
+ */
+function getUserHistory() {
+
+    if (!bridge.isLoggedIn()) {
+        return new VideoPager([], false);
+    }
+
+    class UserHistoryPager extends VideoPager {
+
+        constructor({
+            videos = [],
+            hasMore = true,
+            context = { start: 0 },
+        } = {}) {
+            super(videos, hasMore, context);
+        }
+
+        nextPage() {
+            const start = this.context.start;
+            // getHeaders renews the session, which is what sets accountId
+            const headers = getHeaders();
+
+            const historyResponse = http_client.GET(
+                replaceUrlPlaceholders(WATCH_HISTORY_URL_TEMPLATE, {
+                    account_id: local_state.accountId,
+                    queryString: objectToUrlEncodedString({ order: 'desc', n: HISTORY_ITEMS_PER_PAGE, start, ...getLocalizationSettings() })
+                }),
+                headers,
+                true
+            );
+
+            if (!historyResponse.isOk) {
+                throw new ScriptException(`Failed to fetch watch history. Status: ${historyResponse.code}`);
+            }
+
+            const history = JSON.parse(historyResponse.body);
+            // The API occasionally sends an entry without its panel
+            const entries = history.data.filter(entry => entry.panel);
+
+            const videos = [];
+
+            if (entries.length) {
+                const episodesResponse = http_client.GET(
+                    replaceUrlPlaceholders(OBJECT_WITH_RATINGS_URL_TEMPLATE, { objectId: entries.map(entry => entry.panel.id).join(","), queryString: getLocationQueryString() }),
+                    headers,
+                    true
+                );
+
+                if (!episodesResponse.isOk) {
+                    throw new ScriptException(`Failed to fetch watch history episodes. Status: ${episodesResponse.code}`);
+                }
+
+                const episodesById = {};
+                JSON.parse(episodesResponse.body).data.forEach(episode => {
+                    episodesById[episode.id] = episode;
+                });
+
+                entries.forEach(entry => {
+                    const episode = episodesById[entry.panel.id];
+                    if (!episode) {
+                        return;
+                    }
+
+                    const video = episodeToPlatformVideo(episode, { isPlaylist: true });
+                    const durationInSeconds = (episode.episode_metadata.duration_ms ?? 0) / 1000;
+
+                    // Desktop's PlatformVideo constructor drops both fields, so they are set on the built object
+                    video.playbackTime = entry.fully_watched && durationInSeconds > 0 ? durationInSeconds : entry.playhead;
+                    video.playbackDate = Math.floor(new Date(entry.date_played).getTime() / 1000);
+
+                    videos.push(video);
+                });
+            }
+
+            return new UserHistoryPager({
+                videos,
+                hasMore: start + history.data.length < history.total,
+                context: { start: start + HISTORY_ITEMS_PER_PAGE },
+            });
+        }
+    }
+
+    return new UserHistoryPager().nextPage();
 }
 //#endregion
 //#region utilities

@@ -7,7 +7,7 @@
   "sourceUrl": "https://plugins.grayjay.app/Crunchyroll/CrunchyrollConfig.json",
   "scriptUrl": "./CrunchyrollScript.js",
   "repositoryUrl": "https://gitlab.futo.org/videostreaming/plugins/crunchyroll",
-  "version": 19,
+  "version": 20,
   "iconUrl": "./CrunchyrollIcon.png",
   "id": "9bb33039-8580-48d4-9849-21319ae845a4",
   "scriptSignature": "",
@@ -189,6 +189,9 @@
       "Fix: Error when opening an episode that has not aired yet;",
       "Improvement: Show upcoming episodes as planned on desktop;",
       "Improvement: Show unavailable episodes as locked or hide them, following the premium content setting;"
+    ],
+    "20": [
+      "Feature: Sync watch history and resume positions from your Crunchyroll account (turn on Sync Remote History in the source settings);"
     ]
   }
 }
